@@ -6,7 +6,7 @@ rem Override any of these by setting the variable before running this script.
 if not defined VCPKG set VCPKG=C:\vcpkg
 set VCI=%VCPKG%\installed\x64-windows
 if not defined FMOD_SDK set FMOD_SDK=C:\Program Files (x86)\FMOD SoundSystem\FMOD Studio API Windows\api\core
-if not defined STEAM_SDK set STEAM_SDK=C:\deps\steamworks_sdk
+if not defined STEAM_SDK set STEAM_SDK=C:\deps\steamworks_sdk\sdk
 if not defined NFD_DIR set NFD_DIR=C:\deps\nfd
 set PATH=C:\Program Files\CMake\bin;%PATH%
 rem /FI can't take a path with spaces inside CMAKE_CXX_FLAGS, so stage the prelude in C:\deps

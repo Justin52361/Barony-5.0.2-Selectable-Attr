@@ -98,7 +98,7 @@ extern real_t time_diff;
 extern real_t t, ot, frameval[AVERAGEFRAMES];
 extern Uint32 cycles, pingtime;
 extern real_t fps;
-static const int NUMCLASSES = 26;
+static const int NUMCLASSES = 27;
 #define NUMRACES 18
 #define NUMPLAYABLERACES 14
 extern char address[64];
@@ -159,7 +159,8 @@ enum PlayerClasses : int
 	CLASS_SAPPER,
 	CLASS_SCION,
 	CLASS_HERMIT,
-	CLASS_PALADIN
+	CLASS_PALADIN,
+	CLASS_CLASSLESS
 };
 
 static const std::vector<std::string> playerClassInternalNames = {
@@ -188,7 +189,8 @@ static const std::vector<std::string> playerClassInternalNames = {
 	"class_sapper",
 	"class_scion",
 	"class_hermit",
-	"class_paladin"
+	"class_paladin",
+	"class_classless"
 };
 
 static const int CLASS_SHAMAN_NUM_STARTING_SPELLS = 15;
@@ -350,6 +352,92 @@ void drawAllPlayerCameras();
 
 // function prototypes for charclass.c:
 void initClass(int player);
+
+// Classless loadout: the player spends a fixed point budget on starting items (defined in charclass.cpp).
+// Not available in the map editor build (charclass.cpp is not linked there).
+enum LoadoutSlot : int
+{
+	LOADOUT_SLOT_NONE, // goes to the inventory only
+	LOADOUT_SLOT_WEAPON,
+	LOADOUT_SLOT_SHIELD,
+	LOADOUT_SLOT_HELM,
+	LOADOUT_SLOT_BODY,
+	LOADOUT_SLOT_BOOTS,
+	LOADOUT_SLOT_GLOVES,
+	LOADOUT_SLOT_CLOAK,
+	LOADOUT_SLOT_RING,
+	LOADOUT_SLOT_AMULET,
+	LOADOUT_SLOT_MASK,
+	LOADOUT_NUM_SLOTS,
+	LOADOUT_SLOT_SPELL // not an item: type is a spell ID that gets added to the spell list
+};
+enum LoadoutCategory : int
+{
+	LOADOUT_CAT_WEAPONS,
+	LOADOUT_CAT_ARMOR, // shields, quivers, armor, hats and cloaks
+	LOADOUT_CAT_UTILITY, // rings, amulets, consumables, tools and scrolls
+	LOADOUT_CAT_MAGIC, // staves, spellbooks and spells
+	LOADOUT_NUM_CATEGORIES
+};
+struct LoadoutEntry_t
+{
+	int type; // ItemType, or a spell ID for LOADOUT_SLOT_SPELL
+	int status; // Status
+	int count;
+	int cost;
+	LoadoutSlot slot;
+	LoadoutCategory category;
+};
+constexpr int LOADOUT_MAX_ENTRIES = 256;
+// selection of loadoutTable entries, bit N selects loadoutTable[N]
+struct LoadoutMask_t
+{
+	Uint8 bits[LOADOUT_MAX_ENTRIES / 8] = { 0 };
+	bool test(int i) const { return (bits[i >> 3] >> (i & 7)) & 1; }
+	void flip(int i) { bits[i >> 3] ^= (Uint8)(1 << (i & 7)); }
+	bool empty() const { for ( Uint8 b : bits ) { if ( b ) { return false; } } return true; }
+	void clear() { for ( Uint8& b : bits ) { b = 0; } }
+};
+extern LoadoutMask_t client_loadout[MAXPLAYERS]; // see loadoutTable in charclass.cpp
+extern const LoadoutEntry_t loadoutTable[];
+extern const int LOADOUT_TABLE_SIZE;
+extern const int LOADOUT_BUDGET;
+int loadoutCost(const LoadoutMask_t& mask); // total point cost of the selected entries
+LoadoutMask_t sanitizeLoadout(LoadoutMask_t mask); // drops unknown bits, returns an empty mask if over budget
+
+// Classless starting skills: each point buys SKILL_POINT_VALUE proficiency in one skill.
+// The budget is the average of the old classes (about 5 skills and 134 proficiency in total, ~26 points).
+constexpr int SKILL_SELECT_COUNT = 16; // must equal NUMPROFICIENCIES (checked in charclass.cpp)
+constexpr int SKILL_POINT_BUDGET = 26;
+constexpr int SKILL_POINT_VALUE = 5;
+constexpr int SKILL_POINT_MAX_PER_SKILL = 12; // 60 proficiency, the highest any old class started with
+struct SkillPoints_t
+{
+	Uint8 points[SKILL_SELECT_COUNT] = { 0 };
+	int total() const { int sum = 0; for ( Uint8 p : points ) { sum += p; } return sum; }
+	void clear() { for ( Uint8& p : points ) { p = 0; } }
+};
+extern SkillPoints_t client_skillpoints[MAXPLAYERS];
+SkillPoints_t sanitizeSkillPoints(SkillPoints_t points); // returns an empty selection if over budget or over the per-skill cap
+
+// Classless starting attributes: each point adds 1 to one attribute (STR, DEX, CON, INT, PER, CHR).
+// An attribute can also go down to -ATTR_POINT_MAX_NEGATIVE, every point taken away gives one point back to the budget.
+// The old classes gave +3.2 attribute points on average (they also took ~3.5 away, which classless players cannot opt into),
+// so the budget is 3 points. 5 is the highest bonus any old class had in one attribute.
+constexpr int ATTR_SELECT_COUNT = 6; // must equal NUMSTATS (checked in charclass.cpp)
+constexpr int ATTR_POINT_BUDGET = 3;
+constexpr int ATTR_POINT_MAX_PER_ATTR = 5;
+constexpr int ATTR_POINT_MAX_NEGATIVE = 5;
+struct AttributePoints_t
+{
+	Sint8 points[ATTR_SELECT_COUNT] = { 0 };
+	int total() const { int sum = 0; for ( Sint8 p : points ) { sum += p; } return sum; } // net points spent
+	int negatives() const { int sum = 0; for ( Sint8 p : points ) { if ( p < 0 ) { sum -= p; } } return sum; } // points taken away
+	void clear() { for ( Sint8& p : points ) { p = 0; } }
+};
+extern AttributePoints_t client_attrpoints[MAXPLAYERS];
+AttributePoints_t sanitizeAttributePoints(AttributePoints_t points); // returns an empty selection if over budget or outside the per-attribute range
+
 void initClassStats(const int classnum, void* myStats);
 void initShapeshiftHotbar(int player);
 void deinitShapeshiftHotbar(int player);

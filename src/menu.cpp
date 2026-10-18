@@ -604,6 +604,11 @@ int isCharacterValidFromDLC(Stat& myStats, int characterClass)
 			break;
 	}
 
+	if ( characterClass == CLASS_CLASSLESS )
+	{
+		return VALID_OK_CHARACTER;
+	}
+
 	if ( myStats.playerRace == RACE_HUMAN )
 	{
 		return VALID_OK_CHARACTER;
@@ -989,7 +994,7 @@ static void handleMainMenu(bool mode)
 			if ( keystatus[SDLK_l] && (keystatus[SDLK_LCTRL] || keystatus[SDLK_RCTRL]) )
 			{
 				buttonOpenCharacterCreationWindow(nullptr);
-				client_classes[clientnum] = CLASS_BARBARIAN;
+				client_classes[clientnum] = CLASS_CLASSLESS;
 				stats[0]->appearance = 0;
 				stats[0]->playerRace = RACE_HUMAN;
 				initClass(0);
@@ -1008,7 +1013,7 @@ static void handleMainMenu(bool mode)
 			if ( keystatus[SDLK_m] && (keystatus[SDLK_LCTRL] || keystatus[SDLK_RCTRL]) )
 			{
 				buttonOpenCharacterCreationWindow(nullptr);
-				client_classes[clientnum] = CLASS_BARBARIAN;
+				client_classes[clientnum] = CLASS_CLASSLESS;
 				stats[0]->appearance = 0;
 				stats[0]->playerRace = RACE_HUMAN;
 				initClass(0);
@@ -2653,7 +2658,7 @@ static void handleMainMenu(bool mode)
 						}
 						else
 						{
-							client_classes[0] = 0;
+							client_classes[0] = CLASS_CLASSLESS;
 						}
 					}
 
@@ -2680,7 +2685,7 @@ static void handleMainMenu(bool mode)
 						auto nextIt = std::next(it, 1);
 						if ( nextIt == availableClasses.end() )
 						{
-							client_classes[0] = 0;
+							client_classes[0] = CLASS_CLASSLESS;
 						}
 						else
 						{
@@ -2689,7 +2694,7 @@ static void handleMainMenu(bool mode)
 					}
 					else
 					{
-						client_classes[0] = 0;
+						client_classes[0] = CLASS_CLASSLESS;
 					}
 
 					if ( previousClassPicked != client_classes[0] )
@@ -10247,7 +10252,7 @@ void doEndgame(bool saveHighscore, bool onServerDisconnect) {
 	minimapHighlights.clear();
 	PingNetworkStatus_t::reset();
 	gameModeManager.currentSession.restoreSavedServerFlags();
-	client_classes[0] = 0;
+	client_classes[0] = CLASS_CLASSLESS;
 	for ( c = 0; c < MAXPLAYERS; c++ )
 	{
 		spellcastingAnimationManager_deactivate(&cast_animation[c]);
@@ -11568,7 +11573,7 @@ void buttonOpenCharacterCreationWindow(button_t* my)
 	stats[0]->playerRace = RACE_HUMAN;
 	strcpy(stats[0]->name, "");
 	stats[0]->type = HUMAN;
-	client_classes[0] = 0;
+	client_classes[0] = CLASS_CLASSLESS;
 	stats[0]->clearStats();
 	initClass(0);
 
@@ -11802,9 +11807,9 @@ bool replayLastCharacter(const int index, int multiplayer)
 		stats[index]->sex = static_cast<sex_t>(std::min(lastSex, (int)sex_t::FEMALE));
 		stats[index]->playerRace = std::min(std::max(static_cast<int>(RACE_HUMAN), lastRace), static_cast<int>(RACE_ENUM_END - 1));
 		stats[index]->stat_appearance = lastAppearance;
-		client_classes[index] = std::min(std::max(0, lastClass), static_cast<int>(NUMCLASSES - 1));
+		client_classes[index] = CLASS_CLASSLESS; // classless is the only selectable class
 
-		switch ( isCharacterValidFromDLC(*stats[index], lastClass) )
+		switch ( isCharacterValidFromDLC(*stats[index], client_classes[index]) )
 		{
 			case VALID_OK_CHARACTER:
 				// do nothing.
@@ -11819,22 +11824,22 @@ bool replayLastCharacter(const int index, int multiplayer)
 				}
 				if ( client_classes[index] > CLASS_MONK )
 				{
-					client_classes[index] = CLASS_BARBARIAN;
+					client_classes[index] = CLASS_CLASSLESS;
 				}
 				break;
 			case INVALID_CHARACTER:
 				// invalid for whatever reason, reset.
 				stats[index]->playerRace = RACE_HUMAN;
-				client_classes[index] = CLASS_BARBARIAN;
+				client_classes[index] = CLASS_CLASSLESS;
 				break;
 			case INVALID_REQUIRE_ACHIEVEMENT:
 				// required achievement for class mixing among races, so race is valid.
-				client_classes[index] = CLASS_BARBARIAN;
+				client_classes[index] = CLASS_CLASSLESS;
 				break;
 			default:
 				// invalid for whatever reason, reset.
 				stats[index]->playerRace = RACE_HUMAN;
-				client_classes[index] = CLASS_BARBARIAN;
+				client_classes[index] = CLASS_CLASSLESS;
 				break;
 		}
 		

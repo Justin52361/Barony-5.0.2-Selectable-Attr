@@ -347,6 +347,9 @@ list_t removedEntities;
 Entity* client_selected[MAXPLAYERS] = {nullptr, nullptr, nullptr, nullptr};
 bool inrange[MAXPLAYERS];
 Sint32 client_classes[MAXPLAYERS];
+LoadoutMask_t client_loadout[MAXPLAYERS]; // Classless starting item selection, bitmask of loadoutTable indices
+SkillPoints_t client_skillpoints[MAXPLAYERS]; // Classless starting skill selection, points per proficiency
+AttributePoints_t client_attrpoints[MAXPLAYERS]; // Classless starting attribute selection, points per attribute
 Uint32 client_keepalive[MAXPLAYERS];
 Uint16 portnumber;
 bool client_disconnected[MAXPLAYERS] = { false };

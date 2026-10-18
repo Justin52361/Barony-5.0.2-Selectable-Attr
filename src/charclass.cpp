@@ -690,6 +690,276 @@ void initClassStats(const int classnum, void* myStats)
 	stat->OLDHP = stat->HP;
 }
 
+// Classless loadout table: everything the old classes could start with, plus a few spells.
+// Bit N of client_loadout[player] selects loadoutTable[N] (max LOADOUT_MAX_ENTRIES entries).
+// Entries are grouped by tab (category); the order inside a tab is the order shown in the menu.
+#define LO(type, status, count, cost, slot, cat) \
+	{ type, status, count, cost, LOADOUT_SLOT_##slot, LOADOUT_CAT_##cat }
+const LoadoutEntry_t loadoutTable[] = {
+	// type, status, count, cost, slot, category
+	// --- weapons ---
+	LO(BRONZE_SWORD,         SERVICABLE, 1, 1, WEAPON, WEAPONS),
+	LO(QUARTERSTAFF,         SERVICABLE, 1, 1, WEAPON, WEAPONS),
+	LO(SLING,                SERVICABLE, 1, 1, WEAPON, WEAPONS),
+	LO(IRON_DAGGER,          SERVICABLE, 1, 1, WEAPON, WEAPONS),
+	LO(BRASS_KNUCKLES,       SERVICABLE, 1, 1, WEAPON, WEAPONS),
+	LO(BRONZE_AXE,           SERVICABLE, 1, 1, WEAPON, WEAPONS),
+	LO(BRONZE_MACE,          SERVICABLE, 1, 1, WEAPON, WEAPONS),
+	LO(BRONZE_TOMAHAWK,      SERVICABLE, 1, 1, WEAPON, WEAPONS),
+	LO(TOOL_WHIP,            SERVICABLE, 1, 1, WEAPON, WEAPONS),
+	LO(TOOL_FRYING_PAN,      SERVICABLE, 1, 1, WEAPON, WEAPONS),
+	LO(BOLAS,                SERVICABLE, 1, 1, WEAPON, WEAPONS),
+	LO(BOOMERANG,            SERVICABLE, 1, 1, WEAPON, WEAPONS),
+	LO(RAPIER,               SERVICABLE, 1, 2, WEAPON, WEAPONS),
+	LO(IRON_SWORD,           SERVICABLE, 1, 2, WEAPON, WEAPONS),
+	LO(IRON_AXE,             SERVICABLE, 1, 2, WEAPON, WEAPONS),
+	LO(IRON_SPEAR,           SERVICABLE, 1, 2, WEAPON, WEAPONS),
+	LO(IRON_MACE,            SERVICABLE, 1, 2, WEAPON, WEAPONS),
+	LO(SHILLELAGH_MACE,      SERVICABLE, 1, 2, WEAPON, WEAPONS),
+	LO(SHORTBOW,             SERVICABLE, 1, 2, WEAPON, WEAPONS),
+	LO(CROSSBOW,             SERVICABLE, 1, 2, WEAPON, WEAPONS),
+	LO(STEEL_FLAIL,          SERVICABLE, 1, 3, WEAPON, WEAPONS),
+	LO(STEEL_CHAKRAM,        SERVICABLE, 1, 3, WEAPON, WEAPONS),
+	LO(CLAYMORE_SWORD,       SERVICABLE, 1, 3, WEAPON, WEAPONS),
+	LO(LONGBOW,              SERVICABLE, 1, 3, WEAPON, WEAPONS),
+	LO(COMPOUND_BOW,         SERVICABLE, 1, 3, WEAPON, WEAPONS),
+	LO(CRYSTAL_SWORD,        SERVICABLE, 1, 4, WEAPON, WEAPONS),
+	LO(CRYSTAL_BATTLEAXE,    SERVICABLE, 1, 4, WEAPON, WEAPONS),
+	LO(ARTIFACT_BOW,         SERVICABLE, 1, 6, WEAPON, WEAPONS),
+	// --- armor: shields and quivers ---
+	LO(WOODEN_SHIELD,        SERVICABLE, 1, 1, SHIELD, ARMOR),
+	LO(BRONZE_SHIELD,        SERVICABLE, 1, 2, SHIELD, ARMOR),
+	LO(IRON_SHIELD,          SERVICABLE, 1, 3, SHIELD, ARMOR),
+	LO(QUIVER_HUNTING,       SERVICABLE, 1, 1, SHIELD, ARMOR),
+	LO(QUIVER_LIGHTWEIGHT,   SERVICABLE, 1, 2, SHIELD, ARMOR),
+	LO(QUIVER_KNOCKBACK,     SERVICABLE, 1, 2, SHIELD, ARMOR),
+	LO(QUIVER_FIRE,          SERVICABLE, 1, 2, SHIELD, ARMOR),
+	LO(QUIVER_SILVER,        SERVICABLE, 1, 3, SHIELD, ARMOR),
+	// --- armor: head and face ---
+	LO(LEATHER_HELM,         SERVICABLE, 1, 1, HELM, ARMOR),
+	LO(HAT_FEZ,              SERVICABLE, 1, 1, HELM, ARMOR),
+	LO(HAT_JESTER,           SERVICABLE, 1, 1, HELM, ARMOR),
+	LO(HAT_PHRYGIAN,         SERVICABLE, 1, 1, HELM, ARMOR),
+	LO(HAT_PLUMED_CAP,       SERVICABLE, 1, 1, HELM, ARMOR),
+	LO(HAT_WIZARD,           SERVICABLE, 1, 1, HELM, ARMOR),
+	LO(HAT_HOOD_APPRENTICE,  SERVICABLE, 1, 1, HELM, ARMOR),
+	LO(HAT_HOOD_ASSASSIN,    SERVICABLE, 1, 1, HELM, ARMOR),
+	LO(HAT_HOOD_WHISPERS,    SERVICABLE, 1, 1, HELM, ARMOR),
+	LO(HOOD_TEAL,            SERVICABLE, 1, 1, HELM, ARMOR),
+	LO(PUNISHER_HOOD,        SERVICABLE, 1, 1, HELM, ARMOR),
+	LO(CHAIN_COIF,           SERVICABLE, 1, 2, HELM, ARMOR),
+	LO(HAT_CIRCLET_WISDOM,   SERVICABLE, 1, 3, HELM, ARMOR),
+	LO(MASK_BANDIT,          SERVICABLE, 1, 1, MASK, ARMOR),
+	LO(MASK_EYEPATCH,        SERVICABLE, 1, 1, MASK, ARMOR),
+	LO(MASK_PIPE,            SERVICABLE, 1, 1, MASK, ARMOR),
+	LO(MASK_SHAMAN,          SERVICABLE, 1, 1, MASK, ARMOR),
+	LO(MONOCLE,              SERVICABLE, 1, 1, MASK, ARMOR),
+	// --- armor: body ---
+	LO(TUNIC,                SERVICABLE, 1, 1, BODY, ARMOR),
+	LO(SHAWL,                SERVICABLE, 1, 1, BODY, ARMOR),
+	LO(MACHINIST_APRON,      SERVICABLE, 1, 1, BODY, ARMOR),
+	LO(WIZARD_DOUBLET,       SERVICABLE, 1, 1, BODY, ARMOR),
+	LO(HEALER_DOUBLET,       SERVICABLE, 1, 1, BODY, ARMOR),
+	LO(SILVER_DOUBLET,       SERVICABLE, 1, 1, BODY, ARMOR),
+	LO(ROBE_WIZARD,          SERVICABLE, 1, 2, BODY, ARMOR),
+	LO(LEATHER_BREASTPIECE,  SERVICABLE, 1, 2, BODY, ARMOR),
+	LO(BANDIT_BREASTPIECE,   SERVICABLE, 1, 2, BODY, ARMOR),
+	LO(CHAIN_HAUBERK,        SERVICABLE, 1, 3, BODY, ARMOR),
+	LO(IRON_BREASTPIECE,     SERVICABLE, 1, 4, BODY, ARMOR),
+	// --- armor: hands, feet, cloaks ---
+	LO(GLOVES,               SERVICABLE, 1, 1, GLOVES, ARMOR),
+	LO(SUEDE_GLOVES,         SERVICABLE, 1, 1, GLOVES, ARMOR),
+	LO(BRACERS,              SERVICABLE, 1, 2, GLOVES, ARMOR),
+	LO(LEATHER_BOOTS,        SERVICABLE, 1, 1, BOOTS, ARMOR),
+	LO(CLEAT_BOOTS,          SERVICABLE, 1, 1, BOOTS, ARMOR),
+	LO(QUILTED_BOOTS,        SERVICABLE, 1, 1, BOOTS, ARMOR),
+	LO(SUEDE_BOOTS,          SERVICABLE, 1, 1, BOOTS, ARMOR),
+	LO(LOAFERS,              SERVICABLE, 1, 1, BOOTS, ARMOR),
+	LO(IRON_BOOTS,           SERVICABLE, 1, 2, BOOTS, ARMOR),
+	LO(LEATHER_BOOTS_SPEED,  SERVICABLE, 1, 3, BOOTS, ARMOR),
+	LO(CLOAK,                SERVICABLE, 1, 1, CLOAK, ARMOR),
+	LO(CLOAK_BLACK,          SERVICABLE, 1, 1, CLOAK, ARMOR),
+	LO(CLOAK_SILVER,         SERVICABLE, 1, 2, CLOAK, ARMOR),
+	LO(CLOAK_BACKPACK,       SERVICABLE, 1, 2, CLOAK, ARMOR),
+	LO(CLOAK_PROTECTION,     SERVICABLE, 1, 3, CLOAK, ARMOR),
+	// --- utility: rings and amulets ---
+	LO(RING_SLOWDIGESTION,   SERVICABLE, 1, 2, RING, UTILITY),
+	LO(RING_WARNING,         SERVICABLE, 1, 2, RING, UTILITY),
+	LO(RING_PROTECTION,      SERVICABLE, 1, 3, RING, UTILITY),
+	LO(RING_STRENGTH,        SERVICABLE, 1, 3, RING, UTILITY),
+	LO(RING_LEVITATION,      SERVICABLE, 1, 3, RING, UTILITY),
+	LO(RING_CONFLICT,        SERVICABLE, 1, 3, RING, UTILITY),
+	LO(AMULET_BURNINGRESIST, SERVICABLE, 1, 2, AMULET, UTILITY),
+	LO(AMULET_POISONRESISTANCE, SERVICABLE, 1, 2, AMULET, UTILITY),
+	LO(AMULET_WATERBREATHING, SERVICABLE, 1, 2, AMULET, UTILITY),
+	LO(AMULET_MAGICREFLECTION, SERVICABLE, 1, 3, AMULET, UTILITY),
+	// --- utility: food and drink ---
+	LO(FOOD_BREAD,           SERVICABLE, 2, 1, NONE, UTILITY),
+	LO(FOOD_MEAT,            SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(FOOD_APPLE,           SERVICABLE, 2, 1, NONE, UTILITY),
+	LO(FOOD_CHEESE,          SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(FOOD_FISH,            SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(FOOD_CREAMPIE,        SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(FOOD_TIN,             SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(FOOD_TOMALLEY,        SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(POTION_WATER,         EXCELLENT,  1, 1, NONE, UTILITY),
+	LO(POTION_JUICE,         EXCELLENT,  1, 1, NONE, UTILITY),
+	LO(POTION_BOOZE,         EXCELLENT,  1, 1, NONE, UTILITY),
+	// --- utility: potions ---
+	LO(POTION_HEALING,       EXCELLENT,  1, 2, NONE, UTILITY),
+	LO(POTION_EXTRAHEALING,  EXCELLENT,  1, 3, NONE, UTILITY),
+	LO(POTION_RESTOREMAGIC,  EXCELLENT,  1, 2, NONE, UTILITY),
+	LO(POTION_CUREAILMENT,   EXCELLENT,  1, 2, NONE, UTILITY),
+	LO(POTION_SPEED,         EXCELLENT,  1, 2, NONE, UTILITY),
+	LO(POTION_INVISIBILITY,  EXCELLENT,  1, 2, NONE, UTILITY),
+	LO(POTION_POLYMORPH,     EXCELLENT,  1, 2, NONE, UTILITY),
+	LO(POTION_ACID,          EXCELLENT,  1, 2, NONE, UTILITY),
+	LO(POTION_CONFUSION,     EXCELLENT,  1, 2, NONE, UTILITY),
+	LO(POTION_BLINDNESS,     EXCELLENT,  1, 2, NONE, UTILITY),
+	LO(POTION_SICKNESS,      EXCELLENT,  1, 2, NONE, UTILITY),
+	LO(POTION_PARALYSIS,     EXCELLENT,  1, 3, NONE, UTILITY),
+	LO(POTION_FIRESTORM,     EXCELLENT,  1, 3, NONE, UTILITY),
+	// --- utility: scrolls ---
+	LO(SCROLL_IDENTIFY,      EXCELLENT,  1, 1, NONE, UTILITY),
+	LO(SCROLL_REMOVECURSE,   EXCELLENT,  1, 1, NONE, UTILITY),
+	LO(SCROLL_FOOD,          EXCELLENT,  1, 1, NONE, UTILITY),
+	LO(SCROLL_CONJUREARROW,  EXCELLENT,  1, 1, NONE, UTILITY),
+	LO(SCROLL_MAGICMAPPING,  EXCELLENT,  1, 2, NONE, UTILITY),
+	LO(SCROLL_TELEPORTATION, EXCELLENT,  1, 2, NONE, UTILITY),
+	LO(SCROLL_CHARGING,      EXCELLENT,  1, 2, NONE, UTILITY),
+	LO(SCROLL_FIRE,          EXCELLENT,  1, 2, NONE, UTILITY),
+	LO(SCROLL_SUMMON,        EXCELLENT,  1, 3, NONE, UTILITY),
+	// --- utility: tools and trinkets ---
+	LO(TOOL_TORCH,           WORN,       2, 1, NONE, UTILITY),
+	LO(TOOL_LANTERN,         SERVICABLE, 1, 2, NONE, UTILITY),
+	LO(TOOL_LOCKPICK,        SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(TOOL_PICKAXE,         SERVICABLE, 1, 2, NONE, UTILITY),
+	LO(TOOL_TINOPENER,       SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(TOOL_TOWEL,           SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(TOOL_BLINDFOLD,       SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(TOOL_BLINDFOLD_TELEPATHY, SERVICABLE, 1, 2, NONE, UTILITY),
+	LO(TOOL_BEARTRAP,        SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(TOOL_DECOY,           SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(TOOL_DUCK,            SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(TOOL_SLEEP_BOMB,      SERVICABLE, 1, 2, NONE, UTILITY),
+	LO(TOOL_ALEMBIC,         SERVICABLE, 1, 2, NONE, UTILITY),
+	LO(TOOL_TINKERING_KIT,   SERVICABLE, 1, 2, NONE, UTILITY),
+	LO(TOOL_METAL_SCRAP,     SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(TOOL_MAGIC_SCRAP,     SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(TOOL_DUMMYBOT,        SERVICABLE, 1, 2, NONE, UTILITY),
+	LO(TOOL_SENTRYBOT,       SERVICABLE, 1, 3, NONE, UTILITY),
+	LO(TOOL_CRYSTALSHARD,    SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(TOOL_FOCI_LIGHT_SANCTUARY, SERVICABLE, 1, 2, NONE, UTILITY),
+	LO(TOOL_FOCI_DARK_RIFT,  SERVICABLE, 1, 2, NONE, UTILITY),
+	LO(GEM_ROCK,             SERVICABLE, 1, 1, NONE, UTILITY),
+	LO(GEM_LUCK,             SERVICABLE, 1, 2, NONE, UTILITY),
+	LO(ENCHANTED_FEATHER,    SERVICABLE, 1, 2, NONE, UTILITY),
+	LO(KEY_SILVER,           SERVICABLE, 1, 1, NONE, UTILITY),
+	// --- magic: staves ---
+	LO(MAGICSTAFF_LIGHT,     SERVICABLE, 1, 2, NONE, MAGIC),
+	LO(MAGICSTAFF_SLOW,      SERVICABLE, 1, 2, NONE, MAGIC),
+	LO(MAGICSTAFF_OPENING,   SERVICABLE, 1, 2, NONE, MAGIC),
+	LO(MAGICSTAFF_POISON,    SERVICABLE, 1, 3, NONE, MAGIC),
+	LO(MAGICSTAFF_COLD,      SERVICABLE, 1, 3, NONE, MAGIC),
+	LO(MAGICSTAFF_FIRE,      SERVICABLE, 1, 3, NONE, MAGIC),
+	LO(MAGICSTAFF_LIGHTNING, SERVICABLE, 1, 3, NONE, MAGIC),
+	LO(MAGICSTAFF_CHARM,     SERVICABLE, 1, 3, NONE, MAGIC),
+	LO(MAGICSTAFF_SCEPTER,   SERVICABLE, 1, 3, NONE, MAGIC),
+	// --- magic: spellbooks ---
+	LO(SPELLBOOK_OPENING,    SERVICABLE, 1, 1, NONE, MAGIC),
+	LO(SPELLBOOK_LOCKING,    SERVICABLE, 1, 1, NONE, MAGIC),
+	LO(SPELLBOOK_CUREAILMENT, SERVICABLE, 1, 2, NONE, MAGIC),
+	LO(SPELLBOOK_CONFUSE,    SERVICABLE, 1, 2, NONE, MAGIC),
+	LO(SPELLBOOK_POISON,     SERVICABLE, 1, 2, NONE, MAGIC),
+	LO(SPELLBOOK_INVISIBILITY, SERVICABLE, 1, 3, NONE, MAGIC),
+	LO(SPELLBOOK_CHARM_MONSTER, SERVICABLE, 1, 3, NONE, MAGIC),
+	LO(SPELLBOOK_TROLLS_BLOOD, SERVICABLE, 1, 3, NONE, MAGIC),
+	// --- magic: spells known from the start (type is the spell ID) ---
+	LO(SPELL_LIGHT,          0,          1, 1, SPELL, MAGIC),
+	LO(SPELL_DETECT_FOOD,    0,          1, 1, SPELL, MAGIC),
+	LO(SPELL_IDENTIFY,       0,          1, 1, SPELL, MAGIC),
+	LO(SPELL_FORCEBOLT,      0,          1, 2, SPELL, MAGIC),
+	LO(SPELL_HEALING,        0,          1, 2, SPELL, MAGIC),
+	LO(SPELL_SLEEP,          0,          1, 2, SPELL, MAGIC),
+	LO(SPELL_SPEED,          0,          1, 2, SPELL, MAGIC),
+	LO(SPELL_DASH,           0,          1, 2, SPELL, MAGIC),
+	LO(SPELL_MAGICMISSILE,   0,          1, 3, SPELL, MAGIC),
+	LO(SPELL_COLD,           0,          1, 3, SPELL, MAGIC),
+	LO(SPELL_LIGHTNING,      0,          1, 3, SPELL, MAGIC),
+	LO(SPELL_FIREBALL,       0,          1, 4, SPELL, MAGIC),
+};
+#undef LO
+const int LOADOUT_TABLE_SIZE = (int)(sizeof(loadoutTable) / sizeof(loadoutTable[0]));
+const int LOADOUT_BUDGET = 20;
+static_assert(sizeof(loadoutTable) / sizeof(loadoutTable[0]) <= LOADOUT_MAX_ENTRIES, "loadout selection mask is too small for the table");
+
+int loadoutCost(const LoadoutMask_t& mask)
+{
+	int total = 0;
+	for ( int i = 0; i < LOADOUT_TABLE_SIZE; ++i )
+	{
+		if ( mask.test(i) )
+		{
+			total += loadoutTable[i].cost;
+		}
+	}
+	return total;
+}
+
+LoadoutMask_t sanitizeLoadout(LoadoutMask_t mask)
+{
+	for ( int i = LOADOUT_TABLE_SIZE; i < LOADOUT_MAX_ENTRIES; ++i )
+	{
+		if ( mask.test(i) )
+		{
+			mask.flip(i);
+		}
+	}
+	if ( loadoutCost(mask) > LOADOUT_BUDGET )
+	{
+		mask.clear();
+	}
+	return mask;
+}
+
+static_assert(SKILL_SELECT_COUNT == NUMPROFICIENCIES, "skill selection must cover every proficiency");
+
+SkillPoints_t sanitizeSkillPoints(SkillPoints_t points)
+{
+	for ( Uint8 p : points.points )
+	{
+		if ( p > SKILL_POINT_MAX_PER_SKILL )
+		{
+			points.clear();
+			return points;
+		}
+	}
+	if ( points.total() > SKILL_POINT_BUDGET )
+	{
+		points.clear();
+	}
+	return points;
+}
+
+static_assert(ATTR_SELECT_COUNT == NUMSTATS, "attribute selection must cover every attribute");
+
+AttributePoints_t sanitizeAttributePoints(AttributePoints_t points)
+{
+	for ( Sint8 p : points.points )
+	{
+		if ( p > ATTR_POINT_MAX_PER_ATTR || p < -ATTR_POINT_MAX_NEGATIVE )
+		{
+			points.clear();
+			return points;
+		}
+	}
+	if ( points.total() > ATTR_POINT_BUDGET )
+	{
+		points.clear();
+	}
+	return points;
+}
+
 void initClass(const int player)
 {
 	Item* item = nullptr;
@@ -3349,6 +3619,92 @@ void initClass(const int player)
 			item = newItem(POTION_WATER, EXCELLENT, 4, 4, 0, true, nullptr);
 			item2 = itemPickup(player, item);
 			free(item);
+		}
+	}
+	else if ( client_classes[player] == CLASS_CLASSLESS )
+	{
+		// no attribute bonuses, skills or starting gear
+		initClassStats(client_classes[player], stats[player]);
+
+		// starting attributes picked by the player, validated against the budget
+		const AttributePoints_t attrs = sanitizeAttributePoints(client_attrpoints[player]);
+		stats[player]->STR += attrs.points[STAT_STR];
+		stats[player]->DEX += attrs.points[STAT_DEX];
+		stats[player]->CON += attrs.points[STAT_CON];
+		stats[player]->INT += attrs.points[STAT_INT];
+		stats[player]->PER += attrs.points[STAT_PER];
+		stats[player]->CHR += attrs.points[STAT_CHR];
+
+		// starting skills picked by the player, validated against the budget
+		const SkillPoints_t skills = sanitizeSkillPoints(client_skillpoints[player]);
+		for ( int s = 0; s < NUMPROFICIENCIES; ++s )
+		{
+			if ( skills.points[s] > 0 )
+			{
+				stats[player]->setProficiency(s, skills.points[s] * SKILL_POINT_VALUE);
+			}
+		}
+
+		// starting items picked by the player (client_loadout), validated against the budget.
+		// default is an empty loadout, which gives no gear.
+		const LoadoutMask_t loadout = sanitizeLoadout(client_loadout[player]);
+		if ( !loadout.empty() && !(!isLocalPlayer && multiplayer == CLIENT && intro == false) )
+		{
+			// only one item per equipment slot gets equipped, extras stay in the inventory
+			bool slotUsed[LOADOUT_NUM_SLOTS] = { false };
+			int nextHotbar = 0;
+			for ( int i = 0; i < LOADOUT_TABLE_SIZE; ++i )
+			{
+				if ( !loadout.test(i) )
+				{
+					continue;
+				}
+				const LoadoutEntry_t& entry = loadoutTable[i];
+				if ( entry.slot == LOADOUT_SLOT_SPELL )
+				{
+					// spells only exist on the owner's machine (they also reach the hotbar via the shared spell code below)
+					if ( isLocalPlayer )
+					{
+						addSpell(entry.type, player, true);
+					}
+					continue;
+				}
+				const bool equip = entry.slot != LOADOUT_SLOT_NONE && !slotUsed[entry.slot];
+				if ( equip )
+				{
+					slotUsed[entry.slot] = true;
+				}
+
+				item = newItem((ItemType)entry.type, (Status)entry.status, 0, entry.count, 0, true, nullptr);
+				if ( isLocalPlayer )
+				{
+					item2 = itemPickup(player, item);
+					if ( item2 )
+					{
+						if ( equip )
+						{
+							useItem(item2, player);
+						}
+						// weapons, shields, consumables and tools go on the hotbar, armor and rings don't
+						if ( (entry.slot == LOADOUT_SLOT_NONE || entry.slot == LOADOUT_SLOT_WEAPON
+							|| entry.slot == LOADOUT_SLOT_SHIELD) && nextHotbar < (int)NUM_HOTBAR_SLOTS )
+						{
+							hotbar[nextHotbar].item = item2->uid;
+							++nextHotbar;
+						}
+					}
+					free(item);
+				}
+				else if ( equip )
+				{
+					// remote players only track what they wear, the owner handles the inventory
+					useItem(item, player);
+				}
+				else
+				{
+					free(item);
+				}
+			}
 		}
 	}
 

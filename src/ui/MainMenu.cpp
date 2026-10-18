@@ -50,6 +50,9 @@
 #define VIDEO_RESTART_NEEDED
 #endif
 
+// formats a skill sheet effect value for a player's current proficiency (GameUI.cpp)
+std::string formatSkillSheetEffects(int playernum, int proficiency, std::string& tag, std::string& rawValue);
+
 namespace MainMenu {
     int pause_menu_owner = 0;
 	bool cursor_delete_mode = false;
@@ -943,6 +946,7 @@ namespace MainMenu {
 	static void characterCardLobbySettingsMenu(int index);
 	static void characterCardRaceMenu(int index, bool details, int selection);
 	static void characterCardClassMenu(int index, bool details, int selection);
+	static void characterCardLoadoutMenu(int index, int selection, int category);
 
     static void createControllerPrompt(int index, bool show_player_text, void (*after_func)());
 	static void createCharacterCard(int index);
@@ -11355,6 +11359,28 @@ bind_failed:
 	            continue;
 	        }
 	        // packet header
+	        memcpy(net_packet->data, "LOAD", 4);
+	        net_packet->data[4] = player;
+	        memcpy(&net_packet->data[5], client_loadout[player].bits, sizeof(client_loadout[player].bits));
+	        memcpy(&net_packet->data[5 + sizeof(client_loadout[player].bits)], client_skillpoints[player].points, SKILL_SELECT_COUNT);
+	        memcpy(&net_packet->data[5 + sizeof(client_loadout[player].bits) + SKILL_SELECT_COUNT], client_attrpoints[player].points, ATTR_SELECT_COUNT);
+	        net_packet->len = 5 + (int)sizeof(client_loadout[player].bits) + SKILL_SELECT_COUNT + ATTR_SELECT_COUNT;
+	        if (multiplayer == SERVER) {
+	            for (int i = 1; i < MAXPLAYERS; i++ ) {
+	                if ( client_disconnected[i] ) {
+	                    continue;
+	                }
+	                net_packet->address.host = net_clients[i - 1].host;
+	                net_packet->address.port = net_clients[i - 1].port;
+	                sendPacketSafe(net_sock, -1, net_packet, i - 1);
+	            }
+	        } else {
+	            net_packet->address.host = net_server.host;
+	            net_packet->address.port = net_server.port;
+	            sendPacketSafe(net_sock, -1, net_packet, 0);
+	        }
+	        // (the loadout above is sent first so the PLYR packet's initClass sees it)
+
 	        memcpy(net_packet->data, "PLYR", 4);
 		    net_packet->data[4] = player;
 
@@ -11775,6 +11801,41 @@ bind_failed:
 
 	static std::unordered_map<Uint32, void(*)()> serverPacketHandlers = {
 		// network scan
+		// a client chose its classless starting loadout (host validates and relays it)
+		{'LOAD', [](){
+			const Uint8 player = std::min(net_packet->data[4], (Uint8)(MAXPLAYERS - 1));
+			if (player == 0 || player == clientnum) {
+				return;
+			}
+			if (net_packet->len < 5 + (int)sizeof(LoadoutMask_t::bits) + SKILL_SELECT_COUNT + ATTR_SELECT_COUNT) {
+				return;
+			}
+			LoadoutMask_t loadout;
+			memcpy(loadout.bits, &net_packet->data[5], sizeof(loadout.bits));
+			loadout = sanitizeLoadout(loadout);
+			client_loadout[player] = loadout;
+			memcpy(&net_packet->data[5], loadout.bits, sizeof(loadout.bits));
+			SkillPoints_t skills;
+			memcpy(skills.points, &net_packet->data[5 + sizeof(loadout.bits)], SKILL_SELECT_COUNT);
+			skills = sanitizeSkillPoints(skills);
+			client_skillpoints[player] = skills;
+			memcpy(&net_packet->data[5 + sizeof(loadout.bits)], skills.points, SKILL_SELECT_COUNT);
+			AttributePoints_t attrs;
+			memcpy(attrs.points, &net_packet->data[5 + sizeof(loadout.bits) + SKILL_SELECT_COUNT], ATTR_SELECT_COUNT);
+			attrs = sanitizeAttributePoints(attrs);
+			client_attrpoints[player] = attrs;
+			memcpy(&net_packet->data[5 + sizeof(loadout.bits) + SKILL_SELECT_COUNT], attrs.points, ATTR_SELECT_COUNT);
+			net_packet->len = 5 + (int)sizeof(loadout.bits) + SKILL_SELECT_COUNT + ATTR_SELECT_COUNT;
+			for (int i = 1; i < MAXPLAYERS; i++ ) {
+				if ( client_disconnected[i] || i == player ) {
+					continue;
+				}
+				net_packet->address.host = net_clients[i - 1].host;
+				net_packet->address.port = net_clients[i - 1].port;
+				sendPacketSafe(net_sock, -1, net_packet, i - 1);
+			}
+		}},
+
 		{'SCAN', [](){
 		    handleScanPacket();
 		}},
@@ -12280,6 +12341,22 @@ bind_failed:
 	    {'CMSG', [](){
 	        const Uint32 color = SDLNet_Read32(&net_packet->data[4]);
 		    addLobbyChatMessage(color, (char*)(&net_packet->data[8]));
+	    }},
+
+	    // another player's classless loadout (already validated by the host)
+	    {'LOAD', [](){
+	        const int player = std::min(net_packet->data[4], (Uint8)(MAXPLAYERS - 1));
+	        if (player != clientnum && net_packet->len >= 5 + (int)sizeof(LoadoutMask_t::bits) + SKILL_SELECT_COUNT + ATTR_SELECT_COUNT) {
+	            LoadoutMask_t loadout;
+	            memcpy(loadout.bits, &net_packet->data[5], sizeof(loadout.bits));
+	            client_loadout[player] = sanitizeLoadout(loadout);
+	            SkillPoints_t skills;
+	            memcpy(skills.points, &net_packet->data[5 + sizeof(loadout.bits)], SKILL_SELECT_COUNT);
+	            client_skillpoints[player] = sanitizeSkillPoints(skills);
+	            AttributePoints_t attrs;
+	            memcpy(attrs.points, &net_packet->data[5 + sizeof(loadout.bits) + SKILL_SELECT_COUNT], ATTR_SELECT_COUNT);
+	            client_attrpoints[player] = sanitizeAttributePoints(attrs);
+	        }
 	    }},
 
 	    // update svFlags
@@ -13340,11 +13417,28 @@ failed:
 				}
 			}
 		}
+		// the classless entry is not part of the shipped json
+		{
+			auto& classEntry = data[CLASS_CLASSLESS];
+			classEntry.internal_name = "classless";
+			tmpStats.clearStats();
+			initClassStats(CLASS_CLASSLESS, &tmpStats);
+			classEntry.hp = tmpStats.HP;
+			classEntry.mp = tmpStats.MP;
+			classEntry.text = "Classless\n\x1E" "All attributes start at 0\n\x1E" "No starting skills or equipment\n\x1E" "Spend your level-up points freely";
+			classEntry.linePaddings.clear();
+			classEntry.survivalComplexity.clear();
+			classEntry.survivalComplexity.push_back(std::make_tuple(3, "***", average));
+			classEntry.survivalComplexity.push_back(std::make_tuple(3, "***", average));
+			classEntry.statRatings.assign(6, average);
+			classEntry.statRatingsStrings.assign(6, "average");
+		}
+
 		init = true;
 		printlog("[JSON]: Successfully read json file %s", inputPath.c_str());
 	}
 
-	RaceDescriptions::DescData_t& RaceDescriptions::getMonsterDescriptionData(int type) 
+	RaceDescriptions::DescData_t& RaceDescriptions::getMonsterDescriptionData(int type)
 	{ 
 		return data[monstertypename[type]]; 
 	}
@@ -13543,11 +13637,8 @@ failed:
 	std::vector<const char*> reducedClassList(int index) {
 		std::vector<const char*> result;
 		result.reserve(num_classes);
-		for (int c = CLASS_BARBARIAN; c <= CLASS_PALADIN; ++c) {
-			if (isCharacterValidFromDLC(*stats[index], c) == VALID_OK_CHARACTER) {
-				result.emplace_back(classes_in_order[c]);
-			}
-		}
+		// classless is the only selectable class
+		result.emplace_back(classes_in_order[CLASS_CLASSLESS]);
 		return result;
 	}
 
@@ -14098,7 +14189,7 @@ failed:
 					if (isCharacterValidFromDLC(*stats[index], client_classes[index]) != VALID_OK_CHARACTER) {
 						// perhaps the class is not valid for this race.
 						// if so, change the class to the default (Barbarian)
-						client_classes[index] = 0; // TODO CHALLENGE RUN
+						client_classes[index] = CLASS_CLASSLESS; // TODO CHALLENGE RUN
 
 						if ( gameModeManager.currentSession.challengeRun.isActive() )
 						{
@@ -16392,7 +16483,7 @@ failed:
 					// player tried to play a class they haven't unlocked for this race
 					// revert them to a barbarian.
 					soundError();
-					client_classes[index] = CLASS_BARBARIAN;
+					client_classes[index] = CLASS_CLASSLESS;
 					stats[index]->clearStats();
 					initClass(index);
 					sendPlayerOverNet();
@@ -16637,7 +16728,11 @@ failed:
 
 	int playerClassLangEntryCapitalized(int classnum)
 	{
-		if ( classnum >= CLASS_BARBARIAN && classnum <= CLASS_HUNTER )
+		if ( classnum == CLASS_CLASSLESS )
+		{
+			return 7001;
+		}
+		else if ( classnum >= CLASS_BARBARIAN && classnum <= CLASS_HUNTER )
 		{
 			return 5348 + classnum;
 		}
@@ -17072,7 +17167,8 @@ failed:
 
         bool selected_button = false;
 		static const std::string prefix = "*images/ui/Main Menus/Play/PlayerCreation/ClassSelection/";
-		for (int c = num_classes - 1; c >= 0; --c) {
+		// only the classless entry is offered
+		for (int c = CLASS_CLASSLESS; c >= CLASS_CLASSLESS; --c) {
 			auto name = classes_in_order[c];
 			auto find = classes.find(name);
 			assert(find != classes.end());
@@ -17111,7 +17207,7 @@ failed:
 			}
 			button->setColor(makeColor(255, 255, 255, 255));
 			button->setHighlightColor(makeColor(255, 255, 255, 255));
-			button->setSize(SDL_Rect{8 + (c % 4) * 54, 6 + (c / 4) * 54, 54, 54});
+			button->setSize(SDL_Rect{8, 6, 54, 54});
 			if ((!selection && !strcmp(name, current_class_name)) ||
 			    (selection && c == selection)) {
 			    button->select();
@@ -17119,30 +17215,10 @@ failed:
 			    selected_button = true;
 			}
 			button->setWidgetSearchParent(((std::string("card") + std::to_string(index)).c_str()));
-			button->setWidgetLeft(c == 0 ? classes_in_order[num_classes - 1] : classes_in_order[c - 1]);
-            button->setWidgetRight(c == num_classes - 1 ? classes_in_order[0] : classes_in_order[c + 1]);
-			if (c == 0) {
-				button->setWidgetUp(classes_in_order[num_classes - 1]);
-			} else if (c == 1) {
-				button->setWidgetUp(classes_in_order[num_classes - 4]);
-			} else if (c == 2) {
-                button->setWidgetUp(classes_in_order[num_classes - 3]);
-            } else if (c == 3) {
-                button->setWidgetUp(classes_in_order[num_classes - 2]);
-            } else {
-                button->setWidgetUp(classes_in_order[c - 4]);
-            }
-            if (c == num_classes - 1) {
-                button->setWidgetDown(classes_in_order[0]);
-            } else if (c == num_classes - 2) {
-                button->setWidgetDown(classes_in_order[3]);
-            } else if (c == num_classes - 3) {
-                button->setWidgetDown(classes_in_order[2]);
-            } else if (c == num_classes - 4) {
-                button->setWidgetDown(classes_in_order[1]);
-            } else {
-                button->setWidgetDown(classes_in_order[c + 4]);
-            }
+			button->setWidgetLeft(classes_in_order[c]);
+			button->setWidgetRight(classes_in_order[c]);
+			button->setWidgetUp(classes_in_order[c]);
+			button->setWidgetDown(classes_in_order[c]);
 			button->addWidgetAction("MenuStart", "confirm");
 			button->addWidgetAction("MenuPageRightAlt", "chat");
 			button->addWidgetAction("MenuPageLeftAlt", "privacy");
@@ -17368,6 +17444,1033 @@ failed:
 		confirm->setCallback([](Button& button){soundActivate(); back_fn(button.getOwner());});*/
 	}
 
+	// classless starting item selection: toggle entries of loadoutTable within LOADOUT_BUDGET points
+	// name of a loadout entry, shortened with "..." so that the whole row fits next to the icon
+	static std::string loadout_name_cache[LOADOUT_MAX_ENTRIES];
+	static const std::string& loadoutDisplayName(int entry) {
+		std::string& cached = loadout_name_cache[entry];
+		if (!cached.empty()) {
+			return cached;
+		}
+		const auto& def = loadoutTable[entry];
+		std::string name;
+		if (def.slot == LOADOUT_SLOT_SPELL) {
+			auto spell = getSpellFromID(def.type);
+			name = spell ? spell->getSpellName() : "?";
+		} else {
+			name = items[def.type].getIdentifiedName();
+		}
+		if (def.count > 1) {
+			name += " x" + std::to_string(def.count);
+		}
+		constexpr int max_width = 430; // row width minus icon and margins
+		auto font = Font::get(smallfont_outline);
+		bool shortened = false;
+		while (font && name.size() > 4) {
+			char buf[160];
+			snprintf(buf, sizeof(buf), Language::get(7007), (name + (shortened ? "..." : "")).c_str(), def.cost);
+			int w = 0, h = 0;
+			font->sizeText(buf, &w, &h);
+			if (w <= max_width) {
+				break;
+			}
+			name.pop_back();
+			shortened = true;
+		}
+		if (shortened) {
+			name += "...";
+		}
+		cached = name;
+		return cached;
+	}
+
+	static void closeLoadoutWindow(int index) {
+		if (!main_menu_frame) {
+			return;
+		}
+		auto window = main_menu_frame->findFrame("loadout_window");
+		if (window) {
+			static_cast<Frame*>(window->getParent())->removeSelf();
+		}
+		auto lobby = main_menu_frame->findFrame("lobby");
+		auto card = lobby ? lobby->findFrame((std::string("card") + std::to_string(index)).c_str()) : nullptr;
+		auto button = card ? card->findButton("loadout") : nullptr;
+		if (button) {
+			button->select();
+		}
+	}
+
+	// entry whose tooltip is currently shown in the loadout window (-999 = none yet)
+	static int loadout_tip_entry = -999;
+	// true while the skills tab of the loadout window is shown
+	static bool loadout_skills_tab = false;
+	// true while the attributes tab of the loadout window is shown
+	static bool loadout_attr_tab = false;
+	// attribute rows use table indices after the skill rows
+	#define LOADOUT_ATTR_BASE (LOADOUT_TABLE_SIZE + SKILL_SELECT_COUNT)
+
+	// fields do not wrap by themselves: insert line breaks at word boundaries, returns the number of lines
+	static int wrapTooltipText(Font* font, std::string& text, int width) {
+		int lines = 1;
+		int lineWidth = 0;
+		int spaceW = 0, h = 0;
+		if (font) {
+			font->sizeText("i i", &spaceW, &h);
+			int iw = 0;
+			font->sizeText("ii", &iw, &h);
+			spaceW = std::max(4, spaceW - iw);
+		}
+		std::string out;
+		for (size_t i = 0; i < text.size();) {
+			if (text[i] == '\n') {
+				++lines;
+				lineWidth = 0;
+				out += '\n';
+				++i;
+				continue;
+			}
+			size_t end = i;
+			while (end < text.size() && text[end] != ' ' && text[end] != '\n') {
+				++end;
+			}
+			const std::string w = text.substr(i, end - i);
+			int ww = 0;
+			if (font && !w.empty()) {
+				font->sizeText(w.c_str(), &ww, &h);
+			}
+			if (lineWidth > 0 && lineWidth + spaceW + ww > width) {
+				++lines;
+				lineWidth = ww;
+				out += '\n';
+			} else {
+				if (lineWidth > 0) {
+					out += ' ';
+				}
+				lineWidth += (lineWidth > 0 ? spaceW : 0) + ww;
+			}
+			out += w;
+			i = end;
+			while (i < text.size() && text[i] == ' ') {
+				++i;
+			}
+		}
+		text = out;
+		return lines;
+	}
+
+	// builds the "tip" frame inside the loadout window in the style of the in-game item tooltip:
+	// teal title, icon rows from the game's own tooltip data, description and a footer with weight and value
+	static void buildLoadoutTooltip(Frame* window, int entry) {
+		const auto& def = loadoutTable[entry];
+		const int owner = window->getOwner();
+		char buf[256];
+		const Uint32 teal = makeColorRGB(110, 255, 200);
+		const Uint32 tan = makeColorRGB(222, 178, 128);
+		const Uint32 gold = makeColorRGB(255, 220, 96);
+		const Uint32 green = makeColorRGB(128, 255, 128);
+		const Uint32 red = makeColorRGB(255, 96, 96);
+		const Uint32 grey = makeColorRGB(180, 170, 160);
+		const Uint32 purple = makeColorRGB(168, 120, 255);
+		constexpr int tip_w = 326;
+		constexpr int pad = 12;
+		constexpr int row_h = 30;
+		auto font = Font::get(smallfont_outline);
+
+		struct Row_t {
+			std::string iconPath;
+			std::string text;
+			Uint32 color;
+			std::string right; // right aligned text (item kind)
+		};
+		std::vector<Row_t> rows;
+		std::string title;
+		std::string kind;
+		std::string description;
+		std::string footerRight;
+		const bool spell = def.slot == LOADOUT_SLOT_SPELL;
+		std::set<std::string> shownAttributes;
+
+		Item* temp = spell
+			? newItem(SPELL_ITEM, EXCELLENT, 0, 1, def.type, true, nullptr)
+			: newItem(static_cast<ItemType>(def.type), static_cast<Status>(def.status), 0, 1, 0, true, nullptr);
+
+		if (spell) {
+			auto spellDef = getSpellFromID(def.type);
+			title = spellDef ? spellDef->getSpellName() : "?";
+			kind = Language::get(7024);
+			node_t* node = ItemTooltips.getSpellNodeFromSpellID(def.type);
+			const string_t* path = node ? static_cast<string_t*>(node->element) : nullptr;
+			if (spellDef) {
+				snprintf(buf, sizeof(buf), Language::get(7028), spellDef->mana);
+				rows.push_back({path && path->data ? path->data : "", buf, tan, kind});
+			}
+			description = ItemTooltips.getSpellDescriptionText(owner, *temp);
+		} else {
+			auto& item = items[def.type];
+			title = item.getIdentifiedName();
+			static const int slotLang[LOADOUT_NUM_SLOTS] = {7023, 7013, 7014, 7015, 7016, 7017, 7018, 7019, 7020, 7021, 7022};
+			kind = Language::get(slotLang[def.slot]);
+
+			std::string tooltipType = ItemTooltips.tmpItems[def.type].tooltip;
+			auto tooltipIt = ItemTooltips.tooltips.find(tooltipType);
+			if (tooltipIt != ItemTooltips.tooltips.end()) {
+				auto& tooltip = tooltipIt->second;
+				int index = 0;
+				for (auto icon : tooltip.icons) {
+					const int iconIndex = index++;
+					if (!icon.conditionalAttribute.empty() && !item.hasAttribute(icon.conditionalAttribute)) {
+						continue;
+					}
+					std::string text = icon.text;
+					ItemTooltips.formatItemIcon(owner, tooltipType, *temp, text, iconIndex, icon.conditionalAttribute, nullptr);
+					if (text.empty() || text.compare(0, 3, "+0 ") == 0 || text.compare(0, 3, "-0 ") == 0) {
+						continue; // nothing to show, e.g. a ring with +0 armor class
+					}
+					shownAttributes.insert(icon.conditionalAttribute);
+					rows.push_back({icon.iconPath, text, icon.textColor ? icon.textColor : tan, rows.empty() ? kind : ""});
+					if (rows.size() >= 3) {
+						break;
+					}
+				}
+				for (auto& line : tooltip.descriptionText) {
+					description += line + "\n";
+				}
+				if (!description.empty()) {
+					description.pop_back();
+					ItemTooltips.formatItemDescription(owner, tooltipType, *temp, description);
+				}
+			}
+			if (rows.empty()) {
+				rows.push_back({"", kind, tan, ""});
+			}
+			// stat bonuses that the tooltip data did not already list
+			for (const char* stat : {"STR", "DEX", "CON", "INT", "PER", "CHR"}) {
+				auto it = item.attributes.find(stat);
+				if (it != item.attributes.end() && it->second != 0 && !shownAttributes.count(stat)) {
+					std::string name = ItemTooltips.getItemStatFullName(stat);
+					snprintf(buf, sizeof(buf), "%+d %s", (int)it->second, name.empty() ? stat : name.c_str());
+					rows.push_back({"", buf, it->second > 0 ? green : red, ""});
+				}
+			}
+			snprintf(buf, sizeof(buf), "%s %d  %s %d", Language::get(7032), item.weight, Language::get(7033), item.gold_value);
+			footerRight = buf;
+		}
+		free(temp);
+
+		// measure the wrapped description
+		// fields do not wrap by themselves: insert line breaks at word boundaries, returns the number of lines
+		auto wrapText = [&](std::string& text, int width) {
+			return wrapTooltipText(font, text, width);
+		};
+
+		// rows that do not fit on one line wrap onto more lines
+		std::vector<int> rowHeights;
+		std::vector<bool> rowWrapped;
+		for (auto& row : rows) {
+			const int text_x = row.iconPath.empty() ? pad : pad + 36;
+			const int avail = tip_w - text_x - pad - (row.right.empty() ? 0 : 70);
+			int w = 0, h = 0;
+			if (font) {
+				font->sizeText(row.text.c_str(), &w, &h);
+			}
+			const bool wrapped = w > avail - 8;
+			rowWrapped.push_back(wrapped);
+			rowHeights.push_back(wrapped ? std::max(row_h, wrapText(row.text, avail - 8) * 22 + 10) : row_h);
+		}
+		int rows_h = 0;
+		for (int h : rowHeights) {
+			rows_h += h;
+		}
+
+		int desc_h = 0;
+		if (!description.empty()) {
+			desc_h = wrapText(description, tip_w - 2 * pad - 8) * 22 + 14;
+		}
+		const int title_h = 40;
+		const int footer_h = 34;
+		const int tip_h = title_h + 4 + rows_h + desc_h + footer_h;
+
+		auto tip = window->addFrame("tip");
+		tip->setSize(SDL_Rect{0, 0, tip_w, tip_h});
+		tip->setActualSize(SDL_Rect{0, 0, tip_w, tip_h});
+		tip->setColor(makeColor(24, 26, 34, 250));
+		tip->setBorder(2);
+		tip->setBorderColor(makeColor(96, 90, 86, 255));
+		tip->setOwner(owner);
+
+		auto addLine = [&](const char* name, int y, Uint32 color) {
+			auto line = tip->addFrame(name);
+			line->setSize(SDL_Rect{pad, y, tip_w - 2 * pad, 2});
+			line->setActualSize(SDL_Rect{0, 0, tip_w - 2 * pad, 2});
+			line->setColor(color);
+			line->setBorder(0);
+			};
+		auto addText = [&](const char* name, SDL_Rect rect, const std::string& text, Uint32 color, int hjustify) {
+			auto field = tip->addField(name, 256);
+			field->setSize(rect);
+			field->setFont(smallfont_outline);
+			field->setHJustify(hjustify);
+			field->setVJustify(Field::justify_t::CENTER);
+			field->setTextColor(color);
+			field->setText(text.c_str());
+			return field;
+			};
+
+		addText("title", SDL_Rect{pad, 4, tip_w - 2 * pad, title_h - 8}, title, teal, Field::justify_t::LEFT);
+		addLine("title_line", title_h - 2, makeColor(60, 56, 56, 255));
+
+		int y = title_h + 4;
+		for (size_t r = 0; r < rows.size(); ++r) {
+			const auto& row = rows[r];
+			const std::string n = std::to_string(r);
+			int text_x = pad;
+			if (!row.iconPath.empty()) {
+				tip->addImage(SDL_Rect{pad + 2, y + 3, 24, 24}, 0xffffffff, row.iconPath.c_str(), (std::string("rowicon") + n).c_str());
+				text_x = pad + 36;
+			}
+			const std::string& text = row.text;
+			const int rh = rowHeights[r];
+			const size_t open = text.find('[');
+			const size_t close = open == std::string::npos ? open : text.find(']', open);
+			if (rowWrapped[r]) {
+				const int avail = tip_w - text_x - pad - (row.right.empty() ? 0 : 70);
+				auto wrappedField = addText((std::string("rowa") + n).c_str(), SDL_Rect{text_x, y + 4, avail, rh - 4}, text, row.color, Field::justify_t::LEFT);
+				wrappedField->setVJustify(Field::justify_t::TOP);
+			} else if (close != std::string::npos) {
+				// the bracketed part is a status effect and is drawn highlighted
+				const std::string before = text.substr(0, open);
+				const std::string mid = text.substr(open, close - open + 1);
+				const std::string after = text.substr(close + 1);
+				int bw = 0, mw = 0, h = 0;
+				if (font) {
+					font->sizeText(before.c_str(), &bw, &h);
+					font->sizeText(mid.c_str(), &mw, &h);
+				}
+				addText((std::string("rowa") + n).c_str(), SDL_Rect{text_x, y, bw + 4, row_h}, before, row.color, Field::justify_t::LEFT);
+				addText((std::string("rowb") + n).c_str(), SDL_Rect{text_x + bw, y, mw + 4, row_h}, mid, purple, Field::justify_t::LEFT);
+				addText((std::string("rowc") + n).c_str(), SDL_Rect{text_x + bw + mw, y, tip_w - text_x - bw - mw - pad, row_h}, after, row.color, Field::justify_t::LEFT);
+			} else {
+				addText((std::string("rowa") + n).c_str(), SDL_Rect{text_x, y, tip_w - text_x - pad, row_h}, text, row.color, Field::justify_t::LEFT);
+			}
+			if (!row.right.empty()) {
+				addText((std::string("rowk") + n).c_str(), SDL_Rect{pad, y, tip_w - 2 * pad - 4, row_h}, row.right, grey, Field::justify_t::RIGHT);
+			}
+			y += rh;
+		}
+
+		if (desc_h > 0) {
+			addLine("desc_line", y, makeColor(60, 56, 56, 255));
+			auto field = addText("description", SDL_Rect{pad, y + 4, tip_w - 2 * pad, desc_h - 4}, description, grey, Field::justify_t::LEFT);
+			field->setVJustify(Field::justify_t::TOP);
+			y += desc_h;
+		}
+
+		// footer bar: point cost on the left, weight and value on the right
+		auto footer = tip->addFrame("footer");
+		footer->setSize(SDL_Rect{2, tip_h - footer_h - 2, tip_w - 4, footer_h});
+		footer->setActualSize(SDL_Rect{0, 0, tip_w - 4, footer_h});
+		footer->setColor(makeColor(52, 34, 24, 255));
+		footer->setBorder(0);
+		snprintf(buf, sizeof(buf), Language::get(7031), def.cost);
+		auto costField = footer->addField("cost", 64);
+		costField->setSize(SDL_Rect{pad - 2, 0, 110, footer_h});
+		costField->setFont(smallfont_outline);
+		costField->setHJustify(Field::justify_t::LEFT);
+		costField->setVJustify(Field::justify_t::CENTER);
+		costField->setTextColor(gold);
+		costField->setText(buf);
+		if (!footerRight.empty()) {
+			auto valueField = footer->addField("value", 96);
+			valueField->setSize(SDL_Rect{100, 0, tip_w - 4 - 100 - pad + 2, footer_h});
+			valueField->setFont(smallfont_outline);
+			valueField->setHJustify(Field::justify_t::RIGHT);
+			valueField->setVJustify(Field::justify_t::CENTER);
+			valueField->setTextColor(tan);
+			valueField->setText(footerRight.c_str());
+		}
+	}
+
+	// skills in the order of the in-game skill sheet, falls back to proficiency order if that data is not loaded
+	static std::vector<int> loadoutSkillOrder() {
+		std::vector<int> order;
+		for (auto& entry : Player::SkillSheet_t::skillSheetData.skillEntries) {
+			if (entry.skillId >= 0 && entry.skillId < SKILL_SELECT_COUNT) {
+				order.push_back(entry.skillId);
+			}
+		}
+		if ((int)order.size() != SKILL_SELECT_COUNT) {
+			order.clear();
+			for (int s = 0; s < SKILL_SELECT_COUNT; ++s) {
+				order.push_back(s);
+			}
+		}
+		return order;
+	}
+
+	static Player::SkillSheet_t::SkillSheetData_t::SkillEntry_t* loadoutSkillEntry(int skill) {
+		for (auto& entry : Player::SkillSheet_t::skillSheetData.skillEntries) {
+			if (entry.skillId == skill) {
+				return &entry;
+			}
+		}
+		return nullptr;
+	}
+
+	static std::string loadoutSkillName(int skill) {
+		auto entry = loadoutSkillEntry(skill);
+		return entry ? entry->getSkillName(true) : std::string(getSkillLangEntry(skill));
+	}
+
+	// adds or removes one point of a skill and refreshes the character
+	static void changeLoadoutSkill(int index, int skill, int delta) {
+		SkillPoints_t points = client_skillpoints[index];
+		if (delta > 0) {
+			if (points.points[skill] >= SKILL_POINT_MAX_PER_SKILL) {
+				soundError();
+				addLobbyChatMessage(uint32ColorYellow, Language::get(7038));
+				return;
+			}
+			if (points.total() >= SKILL_POINT_BUDGET) {
+				soundError();
+				addLobbyChatMessage(uint32ColorYellow, Language::get(7037));
+				return;
+			}
+			++points.points[skill];
+		} else {
+			if (points.points[skill] == 0) {
+				soundError();
+				return;
+			}
+			--points.points[skill];
+		}
+		soundCheckmark();
+		client_skillpoints[index] = points;
+		stats[index]->clearStats();
+		initClass(index);
+		sendPlayerOverNet();
+		saveLastCharacter(index, multiplayer);
+	}
+
+	// adds or removes one point of an attribute and refreshes the character
+	static void changeLoadoutAttribute(int index, int attr, int delta) {
+		AttributePoints_t points = client_attrpoints[index];
+		if (delta > 0) {
+			if (points.points[attr] >= ATTR_POINT_MAX_PER_ATTR) {
+				soundError();
+				addLobbyChatMessage(uint32ColorYellow, Language::get(7042));
+				return;
+			}
+			if (points.total() >= ATTR_POINT_BUDGET) {
+				soundError();
+				addLobbyChatMessage(uint32ColorYellow, Language::get(7041));
+				return;
+			}
+			++points.points[attr];
+		} else {
+			if (points.points[attr] <= -ATTR_POINT_MAX_NEGATIVE) {
+				soundError();
+				addLobbyChatMessage(uint32ColorYellow, Language::get(7049));
+				return;
+			}
+			--points.points[attr];
+		}
+		soundCheckmark();
+		client_attrpoints[index] = points;
+		stats[index]->clearStats();
+		initClass(index);
+		sendPlayerOverNet();
+		saveLastCharacter(index, multiplayer);
+	}
+
+	// info panel for a skill in the style of the in-game skill sheet: level, stat, description and effects
+	static void buildSkillTooltip(Frame* window, int skill, int maxHeight) {
+		const int owner = window->getOwner();
+		const Uint32 teal = makeColorRGB(110, 255, 200);
+		const Uint32 tan = makeColorRGB(222, 178, 128);
+		const Uint32 gold = makeColorRGB(255, 220, 96);
+		const Uint32 grey = makeColorRGB(180, 170, 160);
+		constexpr int tip_w = 326;
+		constexpr int pad = 12;
+		constexpr int row_h = 28;
+		constexpr int val_w = 96; // right aligned effect values
+		auto font = Font::get(smallfont_outline);
+		auto entry = loadoutSkillEntry(skill);
+
+		const int level = stats[owner]->getProficiency(skill);
+		int levelLang = 363;
+		if (level >= SKILL_LEVEL_LEGENDARY) { levelLang = 369; }
+		else if (level >= SKILL_LEVEL_MASTER) { levelLang = 368; }
+		else if (level >= SKILL_LEVEL_EXPERT) { levelLang = 367; }
+		else if (level >= SKILL_LEVEL_SKILLED) { levelLang = 366; }
+		else if (level >= SKILL_LEVEL_BASIC) { levelLang = 365; }
+		else if (level >= SKILL_LEVEL_NOVICE) { levelLang = 364; }
+		std::string levelName = Language::get(levelLang);
+		levelName.erase(std::remove(levelName.begin(), levelName.end(), ' '), levelName.end());
+		char buf[256];
+		snprintf(buf, sizeof(buf), "%s (%d)", levelName.c_str(), level);
+		const std::string levelText = buf;
+
+		static const int statLang[NUMSTATS] = {5300, 5301, 5302, 5303, 5304, 5305};
+		const int stat = getStatForProficiency(skill);
+		const std::string statText = (stat >= 0 && stat < NUMSTATS) ? Language::get(statLang[stat]) : "";
+
+		std::string title = entry ? entry->getSkillName() : std::string(getSkillLangEntry(skill));
+		std::string description = entry ? entry->description : "";
+		const int desc_h_lines = wrapTooltipText(font, description, tip_w - 2 * pad - 8);
+		const int desc_h = description.empty() ? 0 : desc_h_lines * 22 + 14;
+
+		struct Effect_t { std::string title; std::string value; int h; };
+		std::vector<Effect_t> effects;
+		const int title_h = 40;
+		int used = title_h + 4 + 2 * row_h + desc_h + 8;
+		if (entry) {
+			for (auto& effect : entry->effects) {
+				if (effect.tag == "MAGIC_CURRENT_TIER_SPELLS") {
+					continue; // spell list, too long for this panel
+				}
+				Effect_t e;
+				e.title = effect.title;
+				e.value = formatSkillSheetEffects(owner, skill, effect.tag, effect.rawValue);
+				const int lines = wrapTooltipText(font, e.title, tip_w - 2 * pad - val_w - 16);
+				e.h = std::max(row_h, lines * 22 + 8);
+				if (used + e.h > maxHeight) {
+					break;
+				}
+				used += e.h;
+				effects.push_back(e);
+			}
+		}
+		const int tip_h = used;
+
+		auto tip = window->addFrame("tip");
+		tip->setSize(SDL_Rect{0, 0, tip_w, tip_h});
+		tip->setActualSize(SDL_Rect{0, 0, tip_w, tip_h});
+		tip->setColor(makeColor(24, 26, 34, 250));
+		tip->setBorder(2);
+		tip->setBorderColor(makeColor(96, 90, 86, 255));
+		tip->setOwner(owner);
+
+		auto addLine = [&](const char* name, int y) {
+			auto line = tip->addFrame(name);
+			line->setSize(SDL_Rect{pad, y, tip_w - 2 * pad, 2});
+			line->setActualSize(SDL_Rect{0, 0, tip_w - 2 * pad, 2});
+			line->setColor(makeColor(60, 56, 56, 255));
+			line->setBorder(0);
+		};
+		auto addText = [&](const char* name, SDL_Rect rect, const std::string& text, Uint32 color, int hjustify) {
+			auto field = tip->addField(name, 256);
+			field->setSize(rect);
+			field->setFont(smallfont_outline);
+			field->setHJustify(hjustify);
+			field->setVJustify(Field::justify_t::CENTER);
+			field->setTextColor(color);
+			field->setText(text.c_str());
+			return field;
+		};
+
+		addText("title", SDL_Rect{pad, 4, tip_w - 2 * pad, title_h - 8}, title, teal, Field::justify_t::LEFT);
+		addLine("title_line", title_h - 2);
+
+		int y = title_h + 4;
+		addText("level_label", SDL_Rect{pad, y, tip_w / 2, row_h}, Language::get(5961), tan, Field::justify_t::LEFT);
+		addText("level_value", SDL_Rect{tip_w / 2, y, tip_w / 2 - pad, row_h}, levelText, gold, Field::justify_t::RIGHT);
+		y += row_h;
+		addText("stat_label", SDL_Rect{pad, y, tip_w / 2, row_h}, Language::get(5962), tan, Field::justify_t::LEFT);
+		addText("stat_value", SDL_Rect{tip_w / 2, y, tip_w / 2 - pad, row_h}, statText, gold, Field::justify_t::RIGHT);
+		y += row_h;
+
+		if (desc_h > 0) {
+			addLine("desc_line", y);
+			auto field = addText("description", SDL_Rect{pad, y + 4, tip_w - 2 * pad, desc_h - 4}, description, grey, Field::justify_t::LEFT);
+			field->setVJustify(Field::justify_t::TOP);
+			y += desc_h;
+		}
+
+		for (size_t e = 0; e < effects.size(); ++e) {
+			const std::string n = std::to_string(e);
+			addLine((std::string("effect_line") + n).c_str(), y);
+			auto name = addText((std::string("effect") + n).c_str(),
+				SDL_Rect{pad, y + 2, tip_w - 2 * pad - val_w - 8, effects[e].h - 2}, effects[e].title, tan, Field::justify_t::LEFT);
+			name->setVJustify(Field::justify_t::CENTER);
+			addText((std::string("effect_value") + n).c_str(),
+				SDL_Rect{tip_w - pad - val_w, y + 2, val_w, effects[e].h - 2}, effects[e].value, gold, Field::justify_t::RIGHT);
+			y += effects[e].h;
+		}
+	}
+
+	// Classless starting loadout window: a centered window with tabs and a list of items on the left
+	// and a live preview of the character on the right.
+	// selection: table index to focus, -1 for the first row, -2 for the active category tab
+	static void characterCardLoadoutMenu(int index, int selection, int category) {
+		if (!main_menu_frame) {
+			return;
+		}
+
+		// switching tabs rebuilds the window, keep the preview angle in that case
+		static real_t preview_yaw;
+		auto existing = main_menu_frame->findFrame("loadout_window");
+		if (existing) {
+			static_cast<Frame*>(existing->getParent())->removeSelf();
+		} else {
+			preview_yaw = 330.0 * PI / 180.0;
+		}
+
+		constexpr int win_w = 1130;
+		constexpr int win_h = 714;
+		constexpr int list_x = 30;
+		constexpr int list_w = 500;
+		static constexpr int list_y = 152;
+		static constexpr int list_h = 452;
+		static constexpr int tab_y = 152;
+		static constexpr int tip_x = list_x + list_w + 40;
+		loadout_tip_entry = -999;
+
+		auto dimmer = main_menu_frame->addFrame("dimmer");
+		dimmer->setSize(SDL_Rect{0, 0, Frame::virtualScreenX, Frame::virtualScreenY});
+		dimmer->setActualSize(dimmer->getSize());
+		dimmer->setColor(makeColor(0, 0, 0, 127));
+		dimmer->setBorder(0);
+		dimmer->setOwner(index);
+
+		auto window = dimmer->addFrame("loadout_window");
+		window->setSize(SDL_Rect{(Frame::virtualScreenX - win_w) / 2, (Frame::virtualScreenY - win_h) / 2, win_w, win_h});
+		window->setActualSize(SDL_Rect{0, 0, win_w, win_h});
+		window->setColor(0);
+		window->setBorder(0);
+		window->setOwner(index);
+
+		// natural Barony look: tiled rock behind the interior, gilded frame on top
+		{
+			auto rock = window->addImage(
+				SDL_Rect{6, 142, win_w - 12, 476},
+				0xffffffff,
+				"*images/ui/Main Menus/Mods/Settings_Window_06_BGPattern.png",
+				"rock");
+			rock->tiled = true;
+			window->addImage(
+				SDL_Rect{0, 0, win_w, win_h},
+				0xffffffff,
+				"*images/ui/Main Menus/Mods/Mod_Window_00.png",
+				"background");
+		}
+
+		auto header = window->addField("header", 64);
+		header->setSize(SDL_Rect{(win_w - 338) / 2, 26, 338, 24});
+		header->setFont(banner_font);
+		header->setText(Language::get(7003));
+		header->setJustify(Field::justify_t::CENTER);
+
+		auto points = window->addField("points", 64);
+		points->setSize(SDL_Rect{40, 640, 340, 40});
+		points->setFont(smallfont_outline);
+		points->setHJustify(Field::justify_t::CENTER);
+		points->setVJustify(Field::justify_t::CENTER);
+		points->setTickCallback([](Widget& widget){
+			char buf[64];
+			if (loadout_attr_tab) {
+				// the total grows by one for every point taken away from an attribute
+				const auto& attrs = client_attrpoints[widget.getOwner()];
+				const int left = ATTR_POINT_BUDGET - attrs.total();
+				snprintf(buf, sizeof(buf), Language::get(7040), left, ATTR_POINT_BUDGET + attrs.negatives());
+			} else if (loadout_skills_tab) {
+				const int left = SKILL_POINT_BUDGET - client_skillpoints[widget.getOwner()].total();
+				snprintf(buf, sizeof(buf), Language::get(7035), left, SKILL_POINT_BUDGET);
+			} else {
+				const int left = LOADOUT_BUDGET - loadoutCost(client_loadout[widget.getOwner()]);
+				snprintf(buf, sizeof(buf), Language::get(7004), left, LOADOUT_BUDGET);
+			}
+			static_cast<Field*>(&widget)->setText(buf);
+			});
+
+		// the tab after the item categories allocates skill points instead of picking items
+		category = std::min(std::max(category, 0), (int)LOADOUT_NUM_CATEGORIES + 1);
+		const bool skillsTab = category == LOADOUT_NUM_CATEGORIES;
+		const bool attrTab = category == LOADOUT_NUM_CATEGORIES + 1;
+		loadout_skills_tab = skillsTab;
+		loadout_attr_tab = attrTab;
+
+		// table indices shown on this tab, the skills tab lists LOADOUT_TABLE_SIZE + proficiency instead
+		std::vector<int> entries;
+		if (attrTab) {
+			for (int a = 0; a < ATTR_SELECT_COUNT; ++a) {
+				entries.push_back(LOADOUT_ATTR_BASE + a);
+			}
+		} else if (skillsTab) {
+			for (int s : loadoutSkillOrder()) {
+				entries.push_back(LOADOUT_TABLE_SIZE + s);
+			}
+		} else {
+			for (int c = 0; c < LOADOUT_TABLE_SIZE; ++c) {
+				if (loadoutTable[c].category == category) {
+					entries.push_back(c);
+				}
+			}
+		}
+
+		// category tabs
+		constexpr int num_tabs = LOADOUT_NUM_CATEGORIES + 2;
+		constexpr int tab_slot = win_w / (num_tabs + 1);
+		constexpr int tab_w = 156;
+		for (int t = 0; t < num_tabs; ++t) {
+			const std::string name = std::string("tab") + std::to_string(t);
+			auto tab = window->addButton(name.c_str());
+			tab->setSize(SDL_Rect{tab_slot * (t + 1) - tab_w / 2, 64, tab_w, 64});
+			tab->setFont(banner_font);
+			tab->setText(Language::get(t < LOADOUT_NUM_CATEGORIES ? 7008 + t : (t == LOADOUT_NUM_CATEGORIES ? 7034 : 7039)));
+			tab->setJustify(Button::justify_t::CENTER);
+			const bool active = t == category;
+			tab->setBackground(active ? "*images/ui/Main Menus/Settings/Settings_Button_SubTitleSelect00.png" : "*images/ui/Main Menus/Settings/Settings_Button_SubTitle00.png");
+			tab->setBackgroundHighlighted(active ? "*images/ui/Main Menus/Settings/Settings_Button_SubTitleSelectHigh00.png" : "*images/ui/Main Menus/Settings/Settings_Button_SubTitleHigh00.png");
+			tab->setBackgroundActivated(active ? "*images/ui/Main Menus/Settings/Settings_Button_SubTitleSelectPress00.png" : "*images/ui/Main Menus/Settings/Settings_Button_SubTitlePress00.png");
+			tab->setColor(makeColor(255, 255, 255, 255));
+			tab->setHighlightColor(makeColor(255, 255, 255, 255));
+			tab->setWidgetSearchParent(window->getName());
+			tab->setWidgetBack("ok");
+			if (t > 0) {
+				tab->setWidgetLeft((std::string("tab") + std::to_string(t - 1)).c_str());
+			}
+			if (t < num_tabs - 1) {
+				tab->setWidgetRight((std::string("tab") + std::to_string(t + 1)).c_str());
+			}
+			tab->setWidgetUp("ok");
+			if (!entries.empty()) {
+				tab->setWidgetDown((std::string("item") + std::to_string(entries.front())).c_str());
+			}
+			tab->setUserData((void*)(intptr_t)t);
+			tab->setCallback([](Button& button){
+				soundActivate();
+				characterCardLoadoutMenu(button.getOwner(), -2, (int)(intptr_t)button.getUserData());
+				});
+			if (selection == -2 && t == category) {
+				tab->select();
+			}
+		}
+
+		constexpr int row_height = 36;
+		const int height = std::max(list_h, 6 + row_height * (int)entries.size());
+
+		auto subframe = window->addFrame("subframe");
+		subframe->setScrollBarsEnabled(false);
+		subframe->setSize(SDL_Rect{list_x, list_y, list_w, list_h});
+		subframe->setActualSize(SDL_Rect{0, 0, list_w, height});
+		subframe->setBorder(0);
+		subframe->setColor(makeColor(12, 8, 6, 150));
+		subframe->setBorderColor(makeColor(140, 94, 20, 255));
+
+		auto slider = window->addSlider("scroll_slider");
+		slider->setRailSize(SDL_Rect{list_x + list_w + 4, list_y, 30, list_h});
+		slider->setRailImage("*images/ui/Main Menus/Play/PlayerCreation/ClassSelection/ClassSelect_ScrollBar_00.png");
+		slider->setHandleSize(SDL_Rect{0, 0, 34, 34});
+		slider->setHandleImage("*images/ui/Main Menus/Play/PlayerCreation/ClassSelection/ClassSelect_ScrollBar_SliderB_00.png");
+		slider->setOrientation(Slider::orientation_t::SLIDER_VERTICAL);
+		slider->setBorder(24);
+		slider->setMinValue(0.f);
+		slider->setMaxValue(subframe->getActualSize().h - subframe->getSize().h);
+		slider->setCallback([](Slider& slider){
+			Frame* frame = static_cast<Frame*>(slider.getParent());
+			Frame* subframe = frame->findFrame("subframe"); assert(subframe);
+			auto actualSize = subframe->getActualSize();
+			actualSize.y = slider.getValue();
+			subframe->setActualSize(actualSize);
+			});
+		slider->setTickCallback([](Widget& widget){
+			Slider* slider = static_cast<Slider*>(&widget);
+			Frame* frame = static_cast<Frame*>(slider->getParent());
+			Frame* subframe = frame->findFrame("subframe"); assert(subframe);
+			auto actualSize = subframe->getActualSize();
+			slider->setValue(actualSize.y);
+			});
+		slider->setWidgetSearchParent(window->getName());
+		// names are shortened to fit, so rebuild them for this tab
+		for (int c : entries) {
+			if (c < LOADOUT_TABLE_SIZE) {
+				loadout_name_cache[c].clear();
+			}
+		}
+		if (!entries.empty()) {
+			slider->setWidgetLeft((std::string("item") + std::to_string(entries.front())).c_str());
+		}
+		slider->setWidgetBack("ok");
+
+		for (size_t p = 0; p < entries.size(); ++p) {
+			const int c = entries[p];
+			const std::string name = std::string("item") + std::to_string(c);
+			auto button = subframe->addButton(name.c_str());
+			button->setSize(SDL_Rect{0, 6 + row_height * (int)p, list_w, row_height});
+			button->setFont(smallfont_outline);
+			button->setHJustify(Button::justify_t::LEFT);
+			button->setVJustify(Button::justify_t::CENTER);
+			button->setTextOffset(SDL_Rect{50, 0, 0, 0});
+			button->setColor(0);
+			button->setBorder(0);
+			button->setBorderColor(0);
+			button->setHighlightColor(makeColor(255, 190, 80, 56));
+			button->setUserData((void*)(intptr_t)c);
+
+			if (attrTab) {
+				// attribute row: left click adds a point, right click removes one (see the window tick)
+				button->setWidgetSearchParent(window->getName());
+				button->setWidgetBack("ok");
+				button->setWidgetRight("scroll_slider");
+				button->setWidgetUp((std::string(p > 0 ? "item" : "tab") + std::to_string(p > 0 ? entries[p - 1] : category)).c_str());
+				if (p + 1 < entries.size()) {
+					button->setWidgetDown((std::string("item") + std::to_string(entries[p + 1])).c_str());
+				} else {
+					button->setWidgetDown("ok");
+				}
+				if ((selection == -1 && p == 0) || selection == c) {
+					button->select();
+					button->scrollParent();
+				}
+
+				button->setCallback([](Button& button){
+					changeLoadoutAttribute(button.getOwner(), (int)(intptr_t)button.getUserData() - LOADOUT_ATTR_BASE, 1);
+					});
+				button->setTickCallback([](Widget& widget){
+					auto button = static_cast<Button*>(&widget);
+					const int attr = (int)(intptr_t)widget.getUserData() - LOADOUT_ATTR_BASE;
+					const int value = client_attrpoints[widget.getOwner()].points[attr];
+					char buf[128];
+					snprintf(buf, sizeof(buf), Language::get(7036), Language::get(7043 + attr), value);
+					button->setText(buf);
+					const Uint32 color = value > 0 ? makeColorRGB(128, 255, 128) : (value < 0 ? makeColorRGB(255, 128, 128) : makeColorRGB(255, 255, 255));
+					button->setTextColor(color);
+					button->setTextHighlightColor(color);
+
+					// rescue this player's focus
+					if (!main_menu_frame) {
+						return;
+					}
+					auto selectedWidget = main_menu_frame->findSelectedWidget(widget.getOwner());
+					if (!selectedWidget) {
+						widget.select();
+					}
+					});
+				continue;
+			}
+
+			if (skillsTab) {
+				// skill row: left click adds a point, right click removes one (see the window tick)
+				const int skill = c - LOADOUT_TABLE_SIZE;
+				button->setWidgetSearchParent(window->getName());
+				button->setWidgetBack("ok");
+				button->setWidgetRight("scroll_slider");
+				button->setWidgetUp((std::string(p > 0 ? "item" : "tab") + std::to_string(p > 0 ? entries[p - 1] : category)).c_str());
+				if (p + 1 < entries.size()) {
+					button->setWidgetDown((std::string("item") + std::to_string(entries[p + 1])).c_str());
+				} else {
+					button->setWidgetDown("ok");
+				}
+				if ((selection == -1 && p == 0) || selection == c) {
+					button->select();
+					button->scrollParent();
+				}
+
+				button->setCallback([](Button& button){
+					changeLoadoutSkill(button.getOwner(), (int)(intptr_t)button.getUserData() - LOADOUT_TABLE_SIZE, 1);
+					});
+				button->setTickCallback([](Widget& widget){
+					auto button = static_cast<Button*>(&widget);
+					const int skill = (int)(intptr_t)widget.getUserData() - LOADOUT_TABLE_SIZE;
+					const int value = client_skillpoints[widget.getOwner()].points[skill] * SKILL_POINT_VALUE;
+					char buf[128];
+					snprintf(buf, sizeof(buf), Language::get(7036), loadoutSkillName(skill).c_str(), value);
+					button->setText(buf);
+					const Uint32 color = value > 0 ? makeColorRGB(128, 255, 128) : makeColorRGB(255, 255, 255);
+					button->setTextColor(color);
+					button->setTextHighlightColor(color);
+
+					// rescue this player's focus
+					if (!main_menu_frame) {
+						return;
+					}
+					auto selectedWidget = main_menu_frame->findSelectedWidget(widget.getOwner());
+					if (!selectedWidget) {
+						widget.select();
+					}
+					});
+
+				// icon of the skill, as on the in-game skill sheet
+				if (auto skillEntry = loadoutSkillEntry(skill)) {
+					const std::string& iconPath = !skillEntry->skillIconPath32px.empty() ? skillEntry->skillIconPath32px : skillEntry->skillIconPath;
+					if (!iconPath.empty()) {
+						subframe->addImage(
+							SDL_Rect{10, 6 + row_height * (int)p + 2, 32, 32},
+							0xffffffff,
+							iconPath.c_str(),
+							(std::string("icon") + std::to_string(c)).c_str());
+					}
+				}
+				continue;
+			}
+
+			// icon to the left of the name
+			{
+				const auto& iconDef = loadoutTable[c];
+				node_t* iconNode = (iconDef.slot == LOADOUT_SLOT_SPELL)
+					? ItemTooltips.getSpellNodeFromSpellID(iconDef.type)
+					: list_Node(&items[iconDef.type].images, 0);
+				const string_t* iconPath = iconNode ? static_cast<string_t*>(iconNode->element) : nullptr;
+				if (iconPath && iconPath->data) {
+					subframe->addImage(
+						SDL_Rect{10, 6 + row_height * (int)p + 2, 32, 32},
+						0xffffffff,
+						iconPath->data,
+						(std::string("icon") + std::to_string(c)).c_str());
+				}
+			}
+			button->setWidgetSearchParent(window->getName());
+			button->setWidgetBack("ok");
+			button->setWidgetRight("scroll_slider");
+			button->setWidgetUp((std::string(p > 0 ? "item" : "tab") + std::to_string(p > 0 ? entries[p - 1] : category)).c_str());
+			if (p + 1 < entries.size()) {
+				button->setWidgetDown((std::string("item") + std::to_string(entries[p + 1])).c_str());
+			} else {
+				button->setWidgetDown("ok");
+			}
+			if ((selection == -1 && p == 0) || selection == c) {
+				button->select();
+				button->scrollParent();
+			}
+
+			button->setCallback([](Button& button){
+				const int index = button.getOwner();
+				const int entry = (int)(intptr_t)button.getUserData();
+				LoadoutMask_t mask = client_loadout[index];
+				mask.flip(entry);
+				if (mask.test(entry) && loadoutCost(mask) > LOADOUT_BUDGET) {
+					soundError();
+					addLobbyChatMessage(uint32ColorYellow, Language::get(7005));
+					return;
+				}
+				soundCheckmark();
+				client_loadout[index] = mask;
+				stats[index]->clearStats();
+				initClass(index);
+				sendPlayerOverNet();
+				saveLastCharacter(index, multiplayer);
+				});
+
+			button->setTickCallback([](Widget& widget){
+				auto button = static_cast<Button*>(&widget);
+				const int entry = (int)(intptr_t)widget.getUserData();
+				const auto& def = loadoutTable[entry];
+				const bool on = client_loadout[widget.getOwner()].test(entry);
+
+				char buf[128];
+				snprintf(buf, sizeof(buf), Language::get(on ? 7007 : 7006), loadoutDisplayName(entry).c_str(), def.cost);
+				button->setText(buf);
+				const Uint32 color = on ? makeColorRGB(128, 255, 128) : makeColorRGB(255, 255, 255);
+				button->setTextColor(color);
+				button->setTextHighlightColor(color);
+
+				// rescue this player's focus
+				if (!main_menu_frame) {
+					return;
+				}
+				auto selectedWidget = main_menu_frame->findSelectedWidget(widget.getOwner());
+				if (!selectedWidget) {
+					widget.select();
+				}
+				});
+		}
+
+		// character preview, shows the gear the loadout gives
+		auto preview = window->addFrame("preview");
+		preview->setSize(SDL_Rect{win_w - 30 - 200, tab_y, 200, list_y + list_h - tab_y});
+		preview->setActualSize(SDL_Rect{0, 0, 200, list_y + list_h - tab_y});
+		preview->setColor(makeColor(12, 8, 6, 150));
+		preview->setBorder(2);
+		preview->setBorderColor(makeColor(140, 94, 20, 255));
+		preview->setTickCallback([](Widget&){
+			preview_yaw += (PI / std::max(1, (int)fpsLimit)) * 0.3;
+			});
+		preview->setDrawCallback([](const Widget& widget, const SDL_Rect rect){
+			drawCharacterPreview(widget.getOwner(), rect, 70, preview_yaw, false);
+			});
+
+		// hover tooltip: follows the focused row and shows what the entry does
+		window->setTickCallback([](Widget& widget){
+			auto window = static_cast<Frame*>(&widget);
+			if (!main_menu_frame) {
+				return;
+			}
+			int entry = -1;
+			int row_y = 0;
+			auto selected = main_menu_frame->findSelectedWidget(window->getOwner());
+			auto subframe = window->findFrame("subframe");
+			if (selected && subframe && selected->getParent() == subframe && !strncmp(selected->getName(), "item", 4)) {
+				entry = (int)(intptr_t)selected->getUserData();
+				row_y = list_y + static_cast<Button*>(selected)->getSize().y - subframe->getActualSize().y;
+			}
+
+			// right click on a skill row takes a point away
+			static bool rightWasDown = false;
+			const bool rightDown = Input::mouseButtons[SDL_BUTTON_RIGHT];
+			if (rightDown && !rightWasDown && loadout_attr_tab && entry >= LOADOUT_ATTR_BASE) {
+				changeLoadoutAttribute(window->getOwner(), entry - LOADOUT_ATTR_BASE, -1);
+			} else if (rightDown && !rightWasDown && loadout_skills_tab && entry >= LOADOUT_TABLE_SIZE && entry < LOADOUT_ATTR_BASE) {
+				changeLoadoutSkill(window->getOwner(), entry - LOADOUT_TABLE_SIZE, -1);
+			}
+			rightWasDown = rightDown;
+
+			// tooltips are keyed by what they show, skills also by their points because the effects change with them
+			int key = entry;
+			if (entry >= LOADOUT_ATTR_BASE) {
+				key = -1; // attribute rows have no info panel
+				entry = -1;
+			} else if (entry >= LOADOUT_TABLE_SIZE) {
+				key = 100000 + (entry - LOADOUT_TABLE_SIZE) * 100 + client_skillpoints[window->getOwner()].points[entry - LOADOUT_TABLE_SIZE];
+			}
+			if (key != loadout_tip_entry) {
+				loadout_tip_entry = key;
+				if (auto old = window->findFrame("tip")) {
+					old->removeSelf();
+				}
+				if (entry >= LOADOUT_TABLE_SIZE) {
+					buildSkillTooltip(window, entry - LOADOUT_TABLE_SIZE, list_h);
+				} else if (entry >= 0) {
+					buildLoadoutTooltip(window, entry);
+				}
+			}
+			if (auto tip = window->findFrame("tip")) {
+				auto size = tip->getSize();
+				size.x = tip_x;
+				if (entry >= LOADOUT_TABLE_SIZE) {
+					size.y = tab_y; // skill info stays at the top, it is too tall to follow the row
+				} else {
+					size.y = std::min(std::max(row_y - 8, (int)tab_y), (int)(list_y + list_h) - size.h);
+				}
+				tip->setSize(size);
+				tip->setInvisible(row_y < list_y - 20 || row_y > list_y + list_h);
+			}
+			});
+
+		// OK returns to the lobby
+		auto ok = window->addButton("ok");
+		ok->setSize(SDL_Rect{(win_w - 108) / 2, 640, 108, 52});
+		ok->setBackground("*images/ui/Main Menus/Disconnect/UI_Disconnect_Button_GoBack00.png");
+		ok->setBackgroundHighlighted("*images/ui/Main Menus/Disconnect/UI_Disconnect_Button_GoBackHigh00.png");
+		ok->setBackgroundActivated("*images/ui/Main Menus/Disconnect/UI_Disconnect_Button_GoBackPress00.png");
+		ok->setColor(makeColor(255, 255, 255, 255));
+		ok->setHighlightColor(makeColor(255, 255, 255, 255));
+		ok->setTextColor(makeColor(255, 255, 255, 255));
+		ok->setTextHighlightColor(makeColor(255, 255, 255, 255));
+		ok->setFont(smallfont_outline);
+		ok->setText(Language::get(7012));
+		ok->setWidgetSearchParent(window->getName());
+		ok->setWidgetBack("ok");
+		ok->setWidgetUp(entries.empty() ? "tab0" : (std::string("item") + std::to_string(entries.back())).c_str());
+		ok->setWidgetDown(entries.empty() ? "tab0" : (std::string("tab") + std::to_string(category)).c_str());
+		ok->setCallback([](Button& button){
+			soundCancel();
+			closeLoadoutWindow(button.getOwner());
+			});
+		if (entries.empty() && selection != -2) {
+			ok->select();
+		}
+	}
+
 	static void createCharacterCard(int index) {
 		auto lobby = main_menu_frame->findFrame("lobby");
 		if (!lobby) {
@@ -17389,7 +18492,10 @@ failed:
             stats[index]->playerRace = RACE_HUMAN;
             stats[index]->sex = static_cast<sex_t>(RNG.getU8() % 2);
             stats[index]->stat_appearance = RNG.uniform(0, NUMAPPEARANCES - 1);
-            client_classes[index] = 0;
+            client_classes[index] = CLASS_CLASSLESS;
+            client_loadout[index].clear(); // new character, start with an empty loadout
+            client_skillpoints[index].clear();
+            client_attrpoints[index].clear();
 
 			bool challengeRunModified = false;
 			if ( gameModeManager.currentSession.challengeRun.isActive() )
@@ -17564,6 +18670,9 @@ failed:
 #else
 			auto& names = stats[index]->sex == sex_t::MALE ?
 				randomPlayerNamesMale : randomPlayerNamesFemale;
+			if (names.empty()) {
+				return;
+			}
 			auto choice = RNG.uniform(0, (int)names.size() - 1);
 			auto name = names[choice].c_str();
 			name_field_fn(nullptr, name, index);
@@ -17589,8 +18698,26 @@ failed:
 		game_settings->addWidgetAction("MenuPageLeftAlt", "privacy");
 		game_settings->setWidgetBack("back_button");
 		game_settings->setWidgetUp("name");
-		game_settings->setWidgetDown("male");
+		game_settings->setWidgetDown("loadout");
 		game_settings->setCallback([](Button& button){soundActivate(); characterCardLobbySettingsMenu(button.getOwner());});
+
+		auto loadout_button = card->addButton("loadout");
+		loadout_button->setSize(SDL_Rect{62, 128, 202, 38});
+		loadout_button->setColor(makeColor(255, 255, 255, 255));
+		loadout_button->setHighlightColor(makeColor(255, 255, 255, 255));
+		loadout_button->setBackground("*images/ui/Main Menus/Play/PlayerCreation/Finalize_Button_ReadyBase_00.png");
+		loadout_button->setBackgroundHighlighted("*images/ui/Main Menus/Play/PlayerCreation/Finalize_Button_ReadyBaseHigh_00.png");
+		loadout_button->setBackgroundActivated("*images/ui/Main Menus/Play/PlayerCreation/Finalize_Button_ReadyBasePress_00.png");
+		loadout_button->setText(Language::get(7002));
+		loadout_button->setFont(smallfont_outline);
+		loadout_button->setWidgetSearchParent(((std::string("card") + std::to_string(index)).c_str()));
+		loadout_button->addWidgetAction("MenuStart", "ready");
+		loadout_button->addWidgetAction("MenuPageRightAlt", "chat");
+		loadout_button->addWidgetAction("MenuPageLeftAlt", "privacy");
+		loadout_button->setWidgetBack("back_button");
+		loadout_button->setWidgetUp("game_settings");
+		loadout_button->setWidgetDown("male");
+		loadout_button->setCallback([](Button& button){soundActivate(); characterCardLoadoutMenu(button.getOwner(), -1, 0);});
 
 		auto bottom = card->addFrame("bottom");
 		bottom->setSize(SDL_Rect{42, 166, 120, 52});
@@ -17636,7 +18763,7 @@ failed:
 		male_button->addWidgetAction("MenuPageLeftAlt", "privacy");
 		male_button->setWidgetBack("back_button");
 		male_button->setWidgetRight("female");
-		male_button->setWidgetUp("game_settings");
+		male_button->setWidgetUp("loadout");
 		male_button->setWidgetDown("class");
 		male_button->setCallback([](Button& button){
 			if ( gameModeManager.currentSession.challengeRun.isActive()
@@ -17722,7 +18849,7 @@ failed:
 		female_button->setWidgetBack("back_button");
 		female_button->setWidgetLeft("male");
 		female_button->setWidgetRight("race");
-		female_button->setWidgetUp("game_settings");
+		female_button->setWidgetUp("loadout");
 		female_button->setWidgetDown("class");
 		female_button->setCallback([](Button& button){
 			if ( gameModeManager.currentSession.challengeRun.isActive()
@@ -19039,7 +20166,7 @@ failed:
 						stats[c]->playerRace = RACE_HUMAN;
 						stats[c]->sex = static_cast<sex_t>(RNG.getU8() % 2);
 						stats[c]->stat_appearance = RNG.uniform(0, NUMAPPEARANCES - 1);
-						client_classes[c] = 0;
+						client_classes[c] = CLASS_CLASSLESS;
 					}
 
 					bool challengeRunModified = false;
@@ -19082,9 +20209,11 @@ failed:
 						// random name
 						auto& names = stats[c]->sex == sex_t::MALE ?
 						    randomPlayerNamesMale : randomPlayerNamesFemale;
-						const int choice = RNG.uniform(0, (int)names.size() - 1);
-						auto name = names[choice].c_str();
-						size_t len = names[choice].size();
+						// the name lists are empty if playernames-*.txt is missing from the game folder
+						const int choice = names.empty() ? 0 : RNG.uniform(0, (int)names.size() - 1);
+						const std::string fallbackName = "Player";
+						auto name = names.empty() ? fallbackName.c_str() : names[choice].c_str();
+						size_t len = names.empty() ? fallbackName.size() : names[choice].size();
 						len = std::min(sizeof(Stat::name) - 1, len);
 						memcpy(stats[c]->name, name, len);
 						stats[c]->name[len] = '\0';

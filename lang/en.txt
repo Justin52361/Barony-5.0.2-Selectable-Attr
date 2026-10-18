@@ -7272,4 +7272,56 @@ has been unlocked!#
 6998 Unlimited#
 6999 You have %d attribute points to spend. Click + next to an attribute in the character sheet.#
 
+7000 classless#
+7001 Classless#
+
+7002 Loadout#
+7003 Starting Loadout#
+7004 Points: %d / %d#
+7005 Not enough points!#
+7006 %s  (%d)#
+7007 [x] %s  (%d)#
+7008 Weapons#
+7009 Armor#
+7010 Utility#
+7011 Magic#
+7012 OK#
+7013 Weapon#
+7014 Shield#
+7015 Helmet#
+7016 Body Armor#
+7017 Boots#
+7018 Gloves#
+7019 Cloak#
+7020 Ring#
+7021 Amulet#
+7022 Mask#
+7023 Item#
+7024 Spell#
+7025 Attack: %d#
+7026 Armor: %d#
+7027 Weight: %d#
+7028 Mana cost: %d#
+7029 Casts: %s#
+7030 Teaches: %s#
+7031 Cost: %d points#
+7032 Weight:#
+7033 Value:#
+7034 Skills#
+7035 Skill points: %d / %d#
+7036 %s  (%d)#
+7037 No skill points left!#
+7038 This skill is already at its maximum.#
+7039 Attributes#
+7040 Attribute points: %d / %d#
+7041 No attribute points left!#
+7042 This attribute is already at its maximum.#
+7043 Strength#
+7044 Dexterity#
+7045 Constitution#
+7046 Intelligence#
+7047 Perception#
+7048 Charisma#
+7049 This attribute is already at its minimum.#
+
 7999 END#

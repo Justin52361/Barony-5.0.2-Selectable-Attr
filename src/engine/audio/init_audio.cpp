@@ -221,7 +221,7 @@ bool initSoundEngine()
 					music_ensemble_global_recv_group->addDSP(1, transceiver);
 					transceiver->setParameterInt(FMOD_DSP_TRANSCEIVER_CHANNEL, i + 1); // receive on channel x
 					transceiver->setParameterFloat(FMOD_DSP_TRANSCEIVER_GAIN, -80.f); // inaudible
-					transceiver->setChannelFormat(0, 2, FMOD_SPEAKERMODE_STEREO); // force stereo on empty channel, otherwise defaults to mono
+					transceiver->setInputChannelFormat(2, FMOD_SPEAKERMODE_STEREO); // force stereo on empty channel, otherwise defaults to mono
 				}
 			}
 
@@ -236,7 +236,7 @@ bool initSoundEngine()
 						music_ensemble_local_recv_player[c]->addDSP(1, transceiver);
 						transceiver->setParameterInt(FMOD_DSP_TRANSCEIVER_CHANNEL, i + 1); // receive on channel x
 						transceiver->setParameterFloat(FMOD_DSP_TRANSCEIVER_GAIN, -80.f); // inaudible
-						transceiver->setChannelFormat(0, 2, FMOD_SPEAKERMODE_STEREO); // force stereo on empty channel, otherwise defaults to mono
+						transceiver->setInputChannelFormat(2, FMOD_SPEAKERMODE_STEREO); // force stereo on empty channel, otherwise defaults to mono
 					}
 				}
 			}

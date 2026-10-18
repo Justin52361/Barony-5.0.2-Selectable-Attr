@@ -27705,7 +27705,11 @@ get text string for the different player chosen classes.
 
 char const * playerClassLangEntry(int classnum, int playernum)
 {
-	if ( classnum >= CLASS_BARBARIAN && classnum <= CLASS_JOKER )
+	if ( classnum == CLASS_CLASSLESS )
+	{
+		return Language::get(7000);
+	}
+	else if ( classnum >= CLASS_BARBARIAN && classnum <= CLASS_JOKER )
 	{
 		return Language::get(1900 + classnum);
 	}

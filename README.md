@@ -1,5 +1,9 @@
 ![Linux-CI_fmod_steam](https://github.com/TurningWheel/Barony/workflows/Linux-CI_fmod_steam/badge.svg) ![Linux-CI_fmod_steam_eos](https://github.com/TurningWheel/Barony/workflows/Linux-CI_fmod_steam_eos/badge.svg)
 
+# Barony Classless
+
+Barony Classless is an unofficial fork of [TurningWheel/Barony](https://github.com/TurningWheel/Barony) (v5.0.2) that has moved away from picking a class. It began as a project that only made level-up attribute points selectable and has grown into a classless system: every character starts as Classless, with no class bonuses, skills or starting gear, and builds itself through the attribute points it earns.
+
 # Fork notice
 
 This is an unofficial fork of [TurningWheel/Barony](https://github.com/TurningWheel/Barony) (v5.0.2). It is not affiliated with or endorsed by Turning Wheel LLC. The original source is under the BSD 2-Clause License (see [LICENSE.txt](LICENSE.txt)); the original copyright notice is retained.
@@ -7,6 +11,7 @@ This is an unofficial fork of [TurningWheel/Barony](https://github.com/TurningWh
 **What this fork changes:**
 
 - Level-up attribute points are no longer rolled randomly. Each level banks 3 points that the player spends with a + button next to each attribute on the character sheet (host-authoritative, using new network packets `SPTS` and `SPNT`).
+- The only selectable class is "Classless", which starts with all attributes at 0 and no skills or starting gear. The other classes' data is kept so saved games, challenge runs and multiplayer peers do not break.
 - Adds a language string (`lang/en.txt` entry 6999) for the unspent-points message.
 - Adds local Windows build support (`build-windows.bat`, `build-msvc-prelude.h`) and a Steamworks 1.65 compatibility fix (`IsRunningOnSteamHardware`).
 

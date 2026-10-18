@@ -15978,6 +15978,12 @@ void Player::CharacterSheet_t::processCharacterSheet()
 			sheetTimer->setDisabled(false);
 		}
 
+		// the level up "+" buttons sit beside the stat rows, hovering one keeps that row selected
+		auto isPlusHighlighted = [statsInnerFrame](const char* name) {
+			Button* plusButton = statsInnerFrame->findButton(name);
+			return plusButton && !plusButton->isInvisible() && !plusButton->isDisabled() && plusButton->isHighlighted();
+		};
+
 		bool mouseHighlightActive = inputs.getVirtualMouse(player.playernum)->draw_cursor
 			&& (!player.GUI.isDropdownActive())
 			&& isInteractable;
@@ -16022,27 +16028,27 @@ void Player::CharacterSheet_t::processCharacterSheet()
 			{
 				targetElement = SHEET_GOLD;
 			}
-			else if ( strButton->isHighlighted() )
+			else if ( strButton->isHighlighted() || isPlusHighlighted("str plus") )
 			{
 				targetElement = SHEET_STR;
 			}
-			else if ( dexButton->isHighlighted() )
+			else if ( dexButton->isHighlighted() || isPlusHighlighted("dex plus") )
 			{
 				targetElement = SHEET_DEX;
 			}
-			else if ( conButton->isHighlighted() )
+			else if ( conButton->isHighlighted() || isPlusHighlighted("con plus") )
 			{
 				targetElement = SHEET_CON;
 			}
-			else if ( intButton->isHighlighted() )
+			else if ( intButton->isHighlighted() || isPlusHighlighted("int plus") )
 			{
 				targetElement = SHEET_INT;
 			}
-			else if ( perButton->isHighlighted() )
+			else if ( perButton->isHighlighted() || isPlusHighlighted("per plus") )
 			{
 				targetElement = SHEET_PER;
 			}
-			else if ( chrButton->isHighlighted() )
+			else if ( chrButton->isHighlighted() || isPlusHighlighted("chr plus") )
 			{
 				targetElement = SHEET_CHR;
 			}

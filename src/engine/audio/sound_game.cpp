@@ -2446,7 +2446,7 @@ void VoiceChat_t::updateRecording()
 				if ( dsp_fader )
 				{
 					recordingChannel->addDSP(2, dsp_fader);
-					dsp_fader->setChannelFormat(0, nativeChannels, FMOD_SPEAKERMODE_MONO);
+					dsp_fader->setInputChannelFormat(nativeChannels, FMOD_SPEAKERMODE_MONO);
 					fmod_result = dsp_fader->setParameterFloat(FMOD_DSP_FADER_GAIN, std::min(kMaxGain, 
 						getAudioSettingFloat(AudioSettingFloat::VOICE_SETTING_RECORDINGGAIN) - 100.f));
 					dsp_fader->setMeteringEnabled(true, true);

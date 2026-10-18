@@ -9822,7 +9822,7 @@ void ClassHotbarConfig_t::writeToFile(HotbarConfigType fileWriteType, HotbarConf
 		}
 
 		stats[clientnum]->clearStats();
-		client_classes[clientnum] = CLASS_BARBARIAN;
+		client_classes[clientnum] = CLASS_CLASSLESS;
 		initClass(clientnum);
 	}
 
